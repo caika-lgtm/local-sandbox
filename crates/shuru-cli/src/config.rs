@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{bail, Result};
 use serde::Deserialize;
 
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct ShuruConfig {
     pub cpus: Option<usize>,
     pub memory: Option<u64>,
