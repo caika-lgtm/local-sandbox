@@ -50,6 +50,7 @@ pub struct NetworkConfig {
 #[allow(non_snake_case)]
 #[napi(object)]
 pub struct StartOptions {
+  pub instanceID: Option<String>,
   pub from: Option<String>,
   pub cpus: Option<u32>,
   pub memory: Option<u32>,
@@ -217,13 +218,13 @@ struct RuntimeSandbox {
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 impl RuntimeSandbox {
-  async fn boot(config: SandboxConfig) -> anyhow::Result<Self> {
+  async fn boot(config: SandboxConfig, instanceID: Option<String>) -> anyhow::Result<Self> {
     let (ready_tx, ready_rx) = oneshot::channel::<anyhow::Result<String>>();
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
 
     std::thread::Builder::new()
       .name("shuru-nodejs-vm".into())
-      .spawn(move || match boot_vm(config) {
+      .spawn(move || match boot_vm(config, instanceID) {
         Ok((sandbox, instance_dir, proxy_handle, fwd_handle)) => {
           if ready_tx.send(Ok(instance_dir.clone())).is_err() {
             return;
@@ -705,8 +706,9 @@ impl Sandbox {
   pub async fn start(opts: Option<StartOptions>) -> Result<Self> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
+      let instanceID = opts.as_ref().and_then(|value| value.instanceID.clone());
       let config = build_sandbox_config(opts.unwrap_or_default()).map_err(to_napi_error)?;
-      let inner = RuntimeSandbox::boot(config).await.map_err(to_napi_error)?;
+      let inner = RuntimeSandbox::boot(config, instanceID).await.map_err(to_napi_error)?;
       return Ok(Self {
         inner: Arc::new(inner),
       });
@@ -1108,6 +1110,7 @@ impl Sandbox {
 impl Default for StartOptions {
   fn default() -> Self {
     Self {
+      instanceID: None,
       from: None,
       cpus: None,
       memory: None,
@@ -1148,6 +1151,7 @@ fn clone_file_cow(src: &str, dst: &str) -> anyhow::Result<()> {
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn boot_vm(
   config: SandboxConfig,
+  instanceID: Option<String>,
 ) -> anyhow::Result<(
   shuru_vm::Sandbox,
   String,
@@ -1178,8 +1182,14 @@ fn boot_vm(
       rootfs_path
     }
   };
-
-  let instance_dir = format!("{data_dir}/instances/nodejs-{}", std::process::id());
+  let instance_dir = match instanceID {
+    Some(id) => {
+      format!("{data_dir}/instances/{}", id.clone())
+    }
+    None => {
+      format!("{data_dir}/instances/nodejs-{}", std::process::id())
+    }
+  };
   let _ = std::fs::remove_dir_all(&instance_dir);
   std::fs::create_dir_all(&instance_dir)?;
 
