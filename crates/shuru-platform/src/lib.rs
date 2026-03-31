@@ -1,7 +1,4 @@
-#![cfg_attr(
-    not(all(target_os = "macos", target_arch = "aarch64")),
-    forbid(unsafe_code)
-)]
+#![cfg_attr(not(target_os = "macos"), forbid(unsafe_code))]
 
 use std::env;
 use std::net::TcpStream;
@@ -169,10 +166,16 @@ pub fn asset_paths(data_dir: &str) -> AssetPaths {
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use macos_aarch64::VmState;
 
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub use macos_x86_64::VmState;
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use macos_aarch64::terminal;
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub use macos_x86_64::terminal;
+
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone)]
 pub struct PlatformSharedDir {
     pub host_path: String,
@@ -180,7 +183,7 @@ pub struct PlatformSharedDir {
     pub read_only: bool,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone)]
 pub struct PlatformVmConfig {
     pub kernel_path: String,
@@ -194,7 +197,7 @@ pub struct PlatformVmConfig {
     pub shared_dirs: Vec<PlatformSharedDir>,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 pub trait PlatformVm: Send + Sync {
     fn start(&self) -> Result<()>;
     fn stop(&self) -> Result<()>;
@@ -207,9 +210,19 @@ pub fn copy_file_cow(src: &str, dst: &str) -> Result<()> {
     macos_aarch64::copy_file_cow(src, dst)
 }
 
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub fn copy_file_cow(src: &str, dst: &str) -> Result<()> {
+    macos_x86_64::copy_file_cow(src, dst)
+}
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub fn create_vm(config: PlatformVmConfig) -> Result<Arc<dyn PlatformVm>> {
     macos_aarch64::create_vm(config)
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub fn create_vm(config: PlatformVmConfig) -> Result<Arc<dyn PlatformVm>> {
+    macos_x86_64::create_vm(config)
 }
 
 #[cfg(test)]
@@ -217,12 +230,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_naming_matches_existing_release_shape() {
+    fn macos_aarch64_artifact_naming_matches_existing_release_shape() {
         let spec = platform_by_id("macos-aarch64").expect("platform should exist");
-        assert_eq!(spec.cli_tarball_name("0.5.2"), "shuru-v0.5.2-darwin-aarch64.tar.gz");
-        assert_eq!(spec.cli_tarball_name("v0.5.2"), "shuru-v0.5.2-darwin-aarch64.tar.gz");
-        assert_eq!(spec.os_image_tarball_name("0.5.2"), "shuru-os-v0.5.2-aarch64.tar.gz");
-        assert_eq!(spec.os_image_tarball_name("v0.5.2"), "shuru-os-v0.5.2-aarch64.tar.gz");
+        assert_eq!(
+            spec.cli_tarball_name("0.5.2"),
+            "shuru-v0.5.2-darwin-aarch64.tar.gz"
+        );
+        assert_eq!(
+            spec.cli_tarball_name("v0.5.2"),
+            "shuru-v0.5.2-darwin-aarch64.tar.gz"
+        );
+        assert_eq!(
+            spec.os_image_tarball_name("0.5.2"),
+            "shuru-os-v0.5.2-aarch64.tar.gz"
+        );
+        assert_eq!(
+            spec.os_image_tarball_name("v0.5.2"),
+            "shuru-os-v0.5.2-aarch64.tar.gz"
+        );
+    }
+
+    #[test]
+    fn macos_x86_64_artifact_naming_matches_existing_release_shape() {
+        let spec = platform_by_id("macos-x86_64").expect("platform should exist");
+        assert_eq!(spec.status, PlatformStatus::Supported);
+        assert_eq!(spec.guest_target, "x86_64-unknown-linux-musl");
+        assert_eq!(spec.kernel_arch, "x86");
+        assert_eq!(
+            spec.cli_tarball_name("0.5.2"),
+            "shuru-v0.5.2-darwin-x86_64.tar.gz"
+        );
+        assert_eq!(
+            spec.cli_tarball_name("v0.5.2"),
+            "shuru-v0.5.2-darwin-x86_64.tar.gz"
+        );
+        assert_eq!(
+            spec.os_image_tarball_name("0.5.2"),
+            "shuru-os-v0.5.2-x86_64.tar.gz"
+        );
+        assert_eq!(
+            spec.os_image_tarball_name("v0.5.2"),
+            "shuru-os-v0.5.2-x86_64.tar.gz"
+        );
+    }
+
+    #[test]
+    fn x86_64_platforms_use_x86_64_guest_target() {
+        for platform_id in ["macos-x86_64", "linux-x86_64", "windows-x86_64"] {
+            let spec = platform_by_id(platform_id).expect("platform should exist");
+            assert_eq!(spec.target_arch, "x86_64");
+            assert_eq!(spec.guest_target, "x86_64-unknown-linux-musl");
+            assert_eq!(spec.kernel_arch, "x86");
+        }
     }
 
     #[test]

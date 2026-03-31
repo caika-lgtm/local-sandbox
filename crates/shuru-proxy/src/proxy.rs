@@ -284,7 +284,8 @@ async fn handle_mitm(
                         let mut data = buf[..n].to_vec();
                         // Replace placeholder tokens with real values
                         for (placeholder, real_value) in &subs {
-                            data = replace_bytes(&data, placeholder.as_bytes(), real_value.as_bytes());
+                            data =
+                                replace_bytes(&data, placeholder.as_bytes(), real_value.as_bytes());
                         }
                         if upstream_wr.write_all(&data).await.is_err() {
                             break;

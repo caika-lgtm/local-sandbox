@@ -60,7 +60,12 @@ mod guest {
         mount_fs("sysfs", "/sys", "sysfs", None);
         mount_fs("devtmpfs", "/dev", "devtmpfs", None);
         std::fs::create_dir_all("/dev/pts").ok();
-        mount_fs("devpts", "/dev/pts", "devpts", Some("newinstance,ptmxmode=0666"));
+        mount_fs(
+            "devpts",
+            "/dev/pts",
+            "devpts",
+            Some("newinstance,ptmxmode=0666"),
+        );
         mount_fs("tmpfs", "/tmp", "tmpfs", None);
     }
 
@@ -69,7 +74,10 @@ mod guest {
             return MountResponse {
                 tag: req.tag.clone(),
                 ok: false,
-                error: Some(format!("failed to create mount point {}: {}", req.guest_path, e)),
+                error: Some(format!(
+                    "failed to create mount point {}: {}",
+                    req.guest_path, e
+                )),
             };
         }
 
@@ -469,11 +477,7 @@ mod guest {
         }
     }
 
-    fn handle_write_file(
-        req: &WriteFileRequest,
-        reader: &mut impl Read,
-        writer: &mut impl Write,
-    ) {
+    fn handle_write_file(req: &WriteFileRequest, reader: &mut impl Read, writer: &mut impl Write) {
         let data = match frame::read_frame(reader) {
             Ok(Some((frame::WRITE_FILE_DATA, payload))) => payload,
             _ => {
@@ -505,8 +509,13 @@ mod guest {
 
         match std::fs::write(&req.path, &data) {
             Ok(()) => {
-                unsafe { libc::sync(); }
-                let resp = WriteFileResponse { ok: true, error: None };
+                unsafe {
+                    libc::sync();
+                }
+                let resp = WriteFileResponse {
+                    ok: true,
+                    error: None,
+                };
                 let _ = frame::send_json(writer, frame::WRITE_FILE_RESP, &resp);
             }
             Err(e) => {
@@ -520,7 +529,10 @@ mod guest {
     }
 
     fn send_fs_ok(writer: &mut impl Write) {
-        let resp = FsOkResponse { ok: true, error: None };
+        let resp = FsOkResponse {
+            ok: true,
+            error: None,
+        };
         let _ = frame::send_json(writer, frame::FS_OK_RESP, &resp);
     }
 
@@ -605,13 +617,19 @@ mod guest {
     fn handle_rename(req: &RenameRequest, writer: &mut impl Write) {
         match std::fs::rename(&req.old_path, &req.new_path) {
             Ok(()) => send_fs_ok(writer),
-            Err(e) => send_fs_err(writer, format!("rename {} -> {}: {}", req.old_path, req.new_path, e)),
+            Err(e) => send_fs_err(
+                writer,
+                format!("rename {} -> {}: {}", req.old_path, req.new_path, e),
+            ),
         }
     }
 
     fn handle_copy(req: &CopyRequest, writer: &mut impl Write) {
         let result = if req.recursive {
-            copy_dir_recursive(std::path::Path::new(&req.src), std::path::Path::new(&req.dst))
+            copy_dir_recursive(
+                std::path::Path::new(&req.src),
+                std::path::Path::new(&req.dst),
+            )
         } else {
             std::fs::copy(&req.src, &req.dst).map(|_| ())
         };
@@ -676,7 +694,11 @@ mod guest {
         }
     }
 
-    fn handle_piped_exec(req: &ExecRequest, vsock_reader: std::net::TcpStream, vsock_writer: std::net::TcpStream) {
+    fn handle_piped_exec(
+        req: &ExecRequest,
+        vsock_reader: std::net::TcpStream,
+        vsock_writer: std::net::TcpStream,
+    ) {
         let mut cmd = Command::new(&req.argv[0]);
         if req.argv.len() > 1 {
             cmd.args(&req.argv[1..]);
@@ -782,7 +804,9 @@ mod guest {
                 let status = child.wait().expect("failed to wait on child");
                 let exit_code = status.code().unwrap_or(-1);
 
-                unsafe { libc::sync(); }
+                unsafe {
+                    libc::sync();
+                }
 
                 let _ = tx.send((frame::EXIT, frame::exit_payload(exit_code).to_vec()));
                 drop(tx);
@@ -810,8 +834,11 @@ mod guest {
             return;
         }
 
-        let mask = libc::IN_CREATE | libc::IN_MODIFY | libc::IN_DELETE
-            | libc::IN_MOVED_FROM | libc::IN_MOVED_TO;
+        let mask = libc::IN_CREATE
+            | libc::IN_MODIFY
+            | libc::IN_DELETE
+            | libc::IN_MOVED_FROM
+            | libc::IN_MOVED_TO;
 
         let mut wd_to_path: HashMap<i32, String> = HashMap::new();
 
@@ -874,9 +901,8 @@ mod guest {
                     if offset + std::mem::size_of::<libc::inotify_event>() > n as usize {
                         break;
                     }
-                    let event = unsafe {
-                        &*(buf.as_ptr().add(offset) as *const libc::inotify_event)
-                    };
+                    let event =
+                        unsafe { &*(buf.as_ptr().add(offset) as *const libc::inotify_event) };
                     let name_len = event.len as usize;
                     offset += std::mem::size_of::<libc::inotify_event>() + name_len;
 
@@ -884,7 +910,10 @@ mod guest {
                     let filename = if name_len > 0 {
                         let name_start = offset - name_len;
                         let name_bytes = &buf[name_start..offset];
-                        let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                        let end = name_bytes
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(name_bytes.len());
                         std::str::from_utf8(&name_bytes[..end]).unwrap_or("")
                     } else {
                         ""
@@ -1095,8 +1124,7 @@ mod guest {
                 vsock_buf.extend_from_slice(&read_buf[..n as usize]);
 
                 // Process complete binary frames
-                while let Some((msg_type, payload_start, total_len)) =
-                    frame::try_parse(&vsock_buf)
+                while let Some((msg_type, payload_start, total_len)) = frame::try_parse(&vsock_buf)
                 {
                     let payload = &vsock_buf[payload_start..total_len];
                     match msg_type {
@@ -1192,9 +1220,8 @@ mod guest {
 
     fn forward_accept_loop(listener_fd: i32) {
         loop {
-            let client_fd = unsafe {
-                libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut())
-            };
+            let client_fd =
+                unsafe { libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
 
             if client_fd < 0 {
                 continue;
@@ -1301,9 +1328,18 @@ mod guest {
 
         // Register signal handlers (PID 1 has no default signal dispositions)
         unsafe {
-            libc::signal(libc::SIGCHLD, sigchld_handler as *const () as libc::sighandler_t);
-            libc::signal(libc::SIGTERM, sigterm_handler as *const () as libc::sighandler_t);
-            libc::signal(libc::SIGINT, sigterm_handler as *const () as libc::sighandler_t);
+            libc::signal(
+                libc::SIGCHLD,
+                sigchld_handler as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGTERM,
+                sigterm_handler as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGINT,
+                sigterm_handler as *const () as libc::sighandler_t,
+            );
         }
 
         let listener_fd = create_vsock_listener(VSOCK_PORT);
@@ -1319,9 +1355,8 @@ mod guest {
         });
 
         loop {
-            let client_fd = unsafe {
-                libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut())
-            };
+            let client_fd =
+                unsafe { libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
 
             if client_fd < 0 {
                 reap_zombies();

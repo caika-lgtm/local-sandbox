@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
-use tar::Archive;
 use shuru_platform::{asset_paths, supported_runtime_platform};
+use tar::Archive;
 
 const GITHUB_REPO: &str = "superhq-ai/shuru";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -111,17 +111,17 @@ pub fn upgrade(data_dir: &str) -> Result<()> {
         .read_json()
         .context("failed to parse release info")?;
 
-    let latest = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
+    let latest = release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name);
 
     if latest == CURRENT_VERSION {
         eprintln!("shuru: already on latest version ({})", CURRENT_VERSION);
         return Ok(());
     }
 
-    eprintln!(
-        "shuru: upgrading {} -> {}",
-        CURRENT_VERSION, latest
-    );
+    eprintln!("shuru: upgrading {} -> {}", CURRENT_VERSION, latest);
 
     // Update CLI binary
     let platform = supported_runtime_platform()?;
@@ -155,8 +155,7 @@ pub fn upgrade(data_dir: &str) -> Result<()> {
     for entry in archive.entries().context("failed to read CLI archive")? {
         let mut entry = entry.context("failed to read archive entry")?;
         if entry.path()?.to_str() == Some("shuru") {
-            let mut out = fs::File::create(&tmp_path)
-                .context("failed to create temp binary")?;
+            let mut out = fs::File::create(&tmp_path).context("failed to create temp binary")?;
             io::copy(&mut entry, &mut out)?;
             break;
         }
@@ -226,7 +225,11 @@ impl<R: Read> Read for ProgressReader<R> {
             let mut stderr = io::stderr().lock();
             if let Some(total) = self.total_bytes {
                 let total_mb = total / (1024 * 1024);
-                let _ = write!(stderr, "\rshuru: downloaded {} / {} MB", current_mb, total_mb);
+                let _ = write!(
+                    stderr,
+                    "\rshuru: downloaded {} / {} MB",
+                    current_mb, total_mb
+                );
             } else {
                 let _ = write!(stderr, "\rshuru: downloaded {} MB", current_mb);
             }

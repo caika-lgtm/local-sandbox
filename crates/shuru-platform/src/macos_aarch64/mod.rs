@@ -1,33 +1,61 @@
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod sys;
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod bootloader;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod configuration;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod directory_sharing;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod entropy;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod error;
-pub mod network;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod memory;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub mod network;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod serial;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod socket;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod storage;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub mod terminal;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod vm;
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::{PlatformSharedDir, PlatformSpec, PlatformStatus, PlatformVm, PlatformVmConfig};
 
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+use crate::{PlatformSpec, PlatformStatus};
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use bootloader::LinuxBootLoader;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use configuration::VirtualMachineConfiguration;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use directory_sharing::{SharedDirectory, VirtioFileSystemDevice};
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use entropy::VirtioEntropyDevice;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use error::{Result as VzResult, VzError};
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use memory::VirtioMemoryBalloonDevice;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use network::{FileHandleNetworkAttachment, MACAddress, VirtioNetworkDevice};
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use serial::{FileHandleSerialAttachment, VirtioConsoleSerialPort};
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use socket::VirtioSocketDevice;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use storage::{
     DiskImageAttachment, DiskImageCachingMode, DiskImageSynchronizationMode, StorageDevice,
     VirtioBlockDevice,
 };
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use vm::{VirtualMachine, VmState};
 
 pub const SPEC: PlatformSpec = PlatformSpec {
@@ -98,10 +126,7 @@ pub fn create_vm(config: PlatformVmConfig) -> Result<Arc<dyn PlatformVm>> {
 
     let dev_null;
     let serial_attachment = if config.console {
-        FileHandleSerialAttachment::new(
-            std::io::stdin().as_raw_fd(),
-            std::io::stdout().as_raw_fd(),
-        )
+        FileHandleSerialAttachment::new(std::io::stdin().as_raw_fd(), std::io::stdout().as_raw_fd())
     } else if config.verbose {
         FileHandleSerialAttachment::new_write_only(std::io::stderr().as_raw_fd())
     } else {

@@ -170,15 +170,10 @@ impl Sandbox {
 
     /// Send pending mount requests over an established vsock connection.
     /// Drains the mount list so subsequent calls are no-ops.
-    fn send_mount_requests(
-        &self,
-        writer: &mut impl Write,
-        reader: &mut impl Read,
-    ) -> Result<()> {
+    fn send_mount_requests(&self, writer: &mut impl Write, reader: &mut impl Read) -> Result<()> {
         let mounts = std::mem::take(&mut *self.mounts.lock().unwrap());
         for req in &mounts {
-            frame::send_json(writer, frame::MOUNT_REQ, &req)
-                .context("sending mount request")?;
+            frame::send_json(writer, frame::MOUNT_REQ, &req).context("sending mount request")?;
             let (_msg_type, payload) = frame::read_frame(reader)
                 .context("reading mount response")?
                 .context("guest closed connection during mount init")?;
@@ -257,7 +252,7 @@ impl Sandbox {
                     exit_code = 1;
                     break;
                 }
-                Some(_) => {} // unknown type, skip
+                Some(_) => {}  // unknown type, skip
                 None => break, // EOF
             }
         }
@@ -272,7 +267,9 @@ impl Sandbox {
 
         self.send_mount_requests(&mut writer, &mut reader)?;
 
-        let req = ReadFileRequest { path: path.to_string() };
+        let req = ReadFileRequest {
+            path: path.to_string(),
+        };
         frame::send_json(&mut writer, frame::READ_FILE_REQ, &req)?;
 
         match frame::read_frame(&mut reader).context("reading read_file response")? {
@@ -281,7 +278,10 @@ impl Sandbox {
                 bail!("{}", String::from_utf8_lossy(&payload));
             }
             Some((other, _)) => {
-                bail!("unexpected frame type 0x{:02x} in read_file response", other);
+                bail!(
+                    "unexpected frame type 0x{:02x} in read_file response",
+                    other
+                );
             }
             None => bail!("guest closed connection during read_file"),
         }
@@ -305,8 +305,8 @@ impl Sandbox {
             .context("reading write_file response")?
             .context("guest closed connection during write_file")?;
 
-        let resp: WriteFileResponse = serde_json::from_slice(&payload)
-            .context("parsing write_file response")?;
+        let resp: WriteFileResponse =
+            serde_json::from_slice(&payload).context("parsing write_file response")?;
 
         if !resp.ok {
             bail!(
@@ -350,7 +350,10 @@ impl Sandbox {
     pub fn mkdir(&self, path: &str, recursive: bool) -> Result<()> {
         self.void_fs_op(
             frame::MKDIR_REQ,
-            &MkdirRequest { path: path.to_string(), recursive },
+            &MkdirRequest {
+                path: path.to_string(),
+                recursive,
+            },
         )
     }
 
@@ -361,7 +364,9 @@ impl Sandbox {
 
         self.send_mount_requests(&mut writer, &mut reader)?;
 
-        let req = ReadDirRequest { path: path.to_string() };
+        let req = ReadDirRequest {
+            path: path.to_string(),
+        };
         frame::send_json(&mut writer, frame::READ_DIR_REQ, &req)?;
 
         match frame::read_frame(&mut reader).context("reading read_dir response")? {
@@ -385,7 +390,9 @@ impl Sandbox {
 
         self.send_mount_requests(&mut writer, &mut reader)?;
 
-        let req = StatRequest { path: path.to_string() };
+        let req = StatRequest {
+            path: path.to_string(),
+        };
         frame::send_json(&mut writer, frame::STAT_REQ, &req)?;
 
         match frame::read_frame(&mut reader).context("reading stat response")? {
@@ -405,28 +412,41 @@ impl Sandbox {
     pub fn remove(&self, path: &str, recursive: bool) -> Result<()> {
         self.void_fs_op(
             frame::REMOVE_REQ,
-            &RemoveRequest { path: path.to_string(), recursive },
+            &RemoveRequest {
+                path: path.to_string(),
+                recursive,
+            },
         )
     }
 
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<()> {
         self.void_fs_op(
             frame::RENAME_REQ,
-            &RenameRequest { old_path: old_path.to_string(), new_path: new_path.to_string() },
+            &RenameRequest {
+                old_path: old_path.to_string(),
+                new_path: new_path.to_string(),
+            },
         )
     }
 
     pub fn copy(&self, src: &str, dst: &str, recursive: bool) -> Result<()> {
         self.void_fs_op(
             frame::COPY_REQ,
-            &CopyRequest { src: src.to_string(), dst: dst.to_string(), recursive },
+            &CopyRequest {
+                src: src.to_string(),
+                dst: dst.to_string(),
+                recursive,
+            },
         )
     }
 
     pub fn chmod(&self, path: &str, mode: u32) -> Result<()> {
         self.void_fs_op(
             frame::CHMOD_REQ,
-            &ChmodRequest { path: path.to_string(), mode },
+            &ChmodRequest {
+                path: path.to_string(),
+                mode,
+            },
         )
     }
 
@@ -510,11 +530,7 @@ impl Sandbox {
     /// Puts the host terminal in raw mode, relays I/O bidirectionally over
     /// vsock, and handles SIGWINCH for window resize.
     /// Returns the guest process exit code.
-    pub fn shell(
-        &self,
-        argv: &[impl AsRef<str>],
-        env: &HashMap<String, String>,
-    ) -> Result<i32> {
+    pub fn shell(&self, argv: &[impl AsRef<str>], env: &HashMap<String, String>) -> Result<i32> {
         let stdin_fd = std::io::stdin().as_raw_fd();
         let (rows, cols) = terminal::terminal_size(stdin_fd);
 
@@ -556,16 +572,14 @@ impl Sandbox {
                         if n == 0 {
                             break;
                         }
-                        if frame::write_frame(&mut vsock_writer, frame::STDIN, &buf[..n]).is_err()
-                        {
+                        if frame::write_frame(&mut vsock_writer, frame::STDIN, &buf[..n]).is_err() {
                             break;
                         }
                     }
                     terminal::StdinEvent::Resize => {
                         let (rows, cols) = terminal::terminal_size(stdin_fd);
                         let payload = frame::resize_payload(rows, cols);
-                        if frame::write_frame(&mut vsock_writer, frame::RESIZE, &payload).is_err()
-                        {
+                        if frame::write_frame(&mut vsock_writer, frame::RESIZE, &payload).is_err() {
                             break;
                         }
                     }
@@ -704,7 +718,11 @@ impl Sandbox {
                 }
                 Err(e) => {
                     if attempt == 50 {
-                        bail!("Failed to connect to guest after {} attempts: {}", attempt, e);
+                        bail!(
+                            "Failed to connect to guest after {} attempts: {}",
+                            attempt,
+                            e
+                        );
                     }
                     tracing::debug!("vsock connect attempt {} failed: {}", attempt, e);
                     std::thread::sleep(Duration::from_millis(200));

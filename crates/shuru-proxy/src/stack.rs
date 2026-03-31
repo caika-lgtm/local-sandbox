@@ -168,10 +168,7 @@ impl NetworkStack {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd {
                 StackCommand::Send { id, payload } => {
-                    self.pending_send
-                        .entry(id.0)
-                        .or_default()
-                        .extend(&payload);
+                    self.pending_send.entry(id.0).or_default().extend(&payload);
                 }
                 StackCommand::Close { id } => {
                     // Defer close until pending_send is drained so we don't
@@ -323,10 +320,8 @@ impl NetworkStack {
                         }
                     }
 
-                    let actual_dst = SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::from(ipv4.octets())),
-                        local.port,
-                    );
+                    let actual_dst =
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ipv4.octets())), local.port);
 
                     self.connections.insert(handle, actual_dst);
                     let _ = self.event_tx.send(StackEvent::NewConnection(TcpConnection {

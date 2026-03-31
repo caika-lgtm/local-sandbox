@@ -1,0 +1,219 @@
+use std::fs;
+use std::process::Command;
+
+use anyhow::{anyhow, bail, Context, Result};
+use shuru_platform::PlatformSpec;
+
+use crate::args::resolve_platform;
+use crate::context::{
+    copy_file, ensure_docker_available, env_value, human_size, is_native_linux_arm64, make_jobs,
+    resolved_data_dir, run_command, workspace_root,
+};
+
+const DEFAULT_KERNEL_VERSION: &str = "6.12.17";
+const KERNEL_BUILD_DOCKER_SCRIPT: &str = r#"set -e
+KERNEL_ARCH="${SHURU_KERNEL_ARCH:-arm64}"
+KERNEL_TARGET="${SHURU_KERNEL_TARGET:-Image}"
+KERNEL_OUTPUT_RELATIVE_PATH="${SHURU_KERNEL_OUTPUT_RELATIVE_PATH:-arch/${KERNEL_ARCH}/boot/Image}"
+
+apt-get update -qq > /dev/null 2>&1
+apt-get install -y -qq build-essential bc flex bison libelf-dev libssl-dev > /dev/null 2>&1
+
+cd /src
+cp /tmp/shuru_defconfig "arch/${KERNEL_ARCH}/configs/shuru_defconfig"
+make ARCH="${KERNEL_ARCH}" shuru_defconfig > /dev/null 2>&1
+
+echo "    Compiling kernel (this takes a few minutes)..."
+make ARCH="${KERNEL_ARCH}" -j"$(nproc)" "${KERNEL_TARGET}"
+
+cp "${KERNEL_OUTPUT_RELATIVE_PATH}" /output/Image
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KernelBuildLayout {
+    defconfig_relpath: &'static str,
+    build_target: &'static str,
+    output_relpath: &'static str,
+}
+
+pub fn build_kernel(args: &[String]) -> Result<()> {
+    let platform = resolve_platform(args)?;
+    build_kernel_for_platform(platform)
+}
+
+pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
+    let layout = kernel_build_layout(platform)?;
+    let kernel_version =
+        env_value("KERNEL_VERSION").unwrap_or_else(|| DEFAULT_KERNEL_VERSION.to_string());
+    let kernel_major = kernel_version
+        .split('.')
+        .next()
+        .ok_or_else(|| anyhow!("invalid kernel version: {kernel_version}"))?;
+    let data_dir = resolved_data_dir();
+    let root = workspace_root();
+    let defconfig = root.join(layout.defconfig_relpath);
+    let build_dir = data_dir.join("kernel-build");
+    let source_dir = build_dir.join(format!("linux-{kernel_version}"));
+    let archive_path = build_dir.join(format!("linux-{kernel_version}.tar.xz"));
+    let kernel_url = format!(
+        "https://cdn.kernel.org/pub/linux/kernel/v{kernel_major}.x/linux-{kernel_version}.tar.xz"
+    );
+
+    println!("==> Building custom kernel {kernel_version} for Shuru");
+
+    if !defconfig.is_file() {
+        bail!("defconfig not found at {}", defconfig.display());
+    }
+
+    fs::create_dir_all(&data_dir)
+        .with_context(|| format!("failed to create {}", data_dir.display()))?;
+
+    if !source_dir.is_dir() {
+        println!("    Downloading kernel source...");
+        fs::create_dir_all(&build_dir)
+            .with_context(|| format!("failed to create {}", build_dir.display()))?;
+        run_command(
+            Command::new("curl")
+                .arg("-sL")
+                .arg(&kernel_url)
+                .arg("-o")
+                .arg(&archive_path),
+            "download kernel source",
+        )?;
+        println!("    Extracting...");
+        run_command(
+            Command::new("tar")
+                .arg("xf")
+                .arg(&archive_path)
+                .arg("-C")
+                .arg(&build_dir),
+            "extract kernel source",
+        )?;
+        fs::remove_file(&archive_path)
+            .with_context(|| format!("failed to remove {}", archive_path.display()))?;
+    }
+
+    if is_native_linux_arm64() && platform.kernel_arch == "arm64" {
+        println!("    Native aarch64 Linux detected, building without Docker");
+
+        copy_file(
+            &defconfig,
+            &source_dir.join(format!(
+                "arch/{}/configs/shuru_defconfig",
+                platform.kernel_arch
+            )),
+        )?;
+        run_command(
+            Command::new("make")
+                .current_dir(&source_dir)
+                .env("ARCH", platform.kernel_arch)
+                .arg("shuru_defconfig"),
+            "configure kernel build",
+        )?;
+        println!("    Compiling kernel (this takes a few minutes)...");
+        run_command(
+            Command::new("make")
+                .current_dir(&source_dir)
+                .env("ARCH", platform.kernel_arch)
+                .arg(format!("-j{}", make_jobs()))
+                .arg(layout.build_target),
+            "compile kernel image",
+        )?;
+        copy_file(
+            &source_dir.join(layout.output_relpath),
+            &data_dir.join("Image"),
+        )?;
+    } else {
+        ensure_docker_available("Docker is required to build the kernel on this host.")?;
+        println!(
+            "    Building in Docker ({} container)",
+            platform.docker_platform
+        );
+        run_command(
+            Command::new("docker")
+                .arg("run")
+                .arg("--rm")
+                .arg("--platform")
+                .arg(platform.docker_platform)
+                .arg("-e")
+                .arg(format!("SHURU_KERNEL_ARCH={}", platform.kernel_arch))
+                .arg("-e")
+                .arg(format!("SHURU_KERNEL_TARGET={}", layout.build_target))
+                .arg("-e")
+                .arg(format!(
+                    "SHURU_KERNEL_OUTPUT_RELATIVE_PATH={}",
+                    layout.output_relpath
+                ))
+                .arg("-v")
+                .arg(format!("{}:/tmp/shuru_defconfig:ro", defconfig.display()))
+                .arg("-v")
+                .arg(format!("{}:/src:rw", source_dir.display()))
+                .arg("-v")
+                .arg(format!("{}:/output", data_dir.display()))
+                .arg("debian:trixie-slim")
+                .arg("/bin/sh")
+                .arg("-c")
+                .arg(KERNEL_BUILD_DOCKER_SCRIPT),
+            "build kernel in Docker",
+        )?;
+    }
+
+    let kernel_path = data_dir.join("Image");
+    println!("    Kernel built: {}", human_size(&kernel_path)?);
+    println!("==> Kernel ready at {}", kernel_path.display());
+    Ok(())
+}
+
+fn kernel_build_layout(platform: &PlatformSpec) -> Result<KernelBuildLayout> {
+    match platform.target_arch {
+        "aarch64" => Ok(KernelBuildLayout {
+            defconfig_relpath: "kernel/shuru_defconfig",
+            build_target: "Image",
+            output_relpath: "arch/arm64/boot/Image",
+        }),
+        "x86_64" => Ok(KernelBuildLayout {
+            defconfig_relpath: "kernel/shuru_x86_64_defconfig",
+            build_target: "bzImage",
+            output_relpath: "arch/x86/boot/bzImage",
+        }),
+        other => bail!("unsupported kernel target architecture: {other}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shuru_platform::platform_by_id;
+
+    #[test]
+    fn aarch64_kernel_layout_uses_image() {
+        let layout =
+            kernel_build_layout(platform_by_id("macos-aarch64").expect("platform should exist"))
+                .expect("layout should resolve");
+
+        assert_eq!(
+            layout,
+            KernelBuildLayout {
+                defconfig_relpath: "kernel/shuru_defconfig",
+                build_target: "Image",
+                output_relpath: "arch/arm64/boot/Image",
+            }
+        );
+    }
+
+    #[test]
+    fn x86_64_kernel_layout_uses_bzimage() {
+        let layout =
+            kernel_build_layout(platform_by_id("macos-x86_64").expect("platform should exist"))
+                .expect("layout should resolve");
+
+        assert_eq!(
+            layout,
+            KernelBuildLayout {
+                defconfig_relpath: "kernel/shuru_x86_64_defconfig",
+                build_target: "bzImage",
+                output_relpath: "arch/x86/boot/bzImage",
+            }
+        );
+    }
+}
