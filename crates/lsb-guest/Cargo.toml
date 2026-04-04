@@ -1,0 +1,13 @@
+[package]
+name = "lsb-guest"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "lsb-guest"
+path = "src/main.rs"
+
+[dependencies]
+lsb-proto = { path = "../lsb-proto" }
+libc = "0.2"
+serde_json = "1"

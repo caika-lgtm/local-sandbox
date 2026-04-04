@@ -4,7 +4,7 @@ import Nav from "../../components/landing/Nav.astro";
 import Footer from "../../components/landing/Footer.astro";
 import CodeBlock from "../../components/CodeBlock.astro";
 
-const primitivesCode = `import { Sandbox } from "@superhq/shuru-nodejs"
+const primitivesCode = `import { Sandbox } from "@superhq/lsb-nodejs"
 
 const sb = await Sandbox.start()
 
@@ -32,7 +32,7 @@ await proc.kill()
 await sb.stop()`;
 
 const harnessCode = `import Anthropic from "@anthropic-ai/sdk"
-import { Sandbox } from "@superhq/shuru-nodejs"
+import { Sandbox } from "@superhq/lsb-nodejs"
 
 const client = new Anthropic()
 const sb = await Sandbox.start()
@@ -83,7 +83,7 @@ const configCode = `{
 }`;
 
 const sandboxCode = `$ echo $API_KEY
-shuru_tok_19254a8c7f3e0001
+lsb_tok_19254a8c7f3e0001
 
 # agent makes a request
 # proxy swaps the placeholder for the real key
@@ -96,7 +96,7 @@ $ curl https://api.openai.com/v1/chat/completions \\
 
 # the real key never enters the VM`;
 
-const checkpointCode = `import { Sandbox } from "@superhq/shuru-nodejs"
+const checkpointCode = `import { Sandbox } from "@superhq/lsb-nodejs"
 
 // sandboxes start as bare Debian. install what you need, then save
 const sb = await Sandbox.start({ allowNet: true })
@@ -106,7 +106,7 @@ await sb.exec("git clone https://github.com/acme/api.git /app")
 await sb.exec("cd /app && npm install")
 await sb.checkpoint("ready") // saves disk state, stops the VM`;
 
-const fanoutCode = `import { Sandbox } from "@superhq/shuru-nodejs"
+const fanoutCode = `import { Sandbox } from "@superhq/lsb-nodejs"
 
 // each issue gets its own VM forked from "ready"
 // node, claude code, and deps are already there. boots in ~1s
@@ -142,8 +142,8 @@ const results = await Promise.all(issues.map(async ({ branch, task }) => {
 ---
 
 <Layout
-  title="Local sandbox and execution layer for autonomous agents on macOS - shuru"
-  description="Shuru is a local execution layer for AI agent orchestrators. Ephemeral Linux VMs, secret isolation, and checkpoints for multi-agent workflows."
+  title="Local sandbox and execution layer for autonomous agents on macOS - lsb"
+  description="lsb is a local execution layer for AI agent orchestrators. Ephemeral Linux VMs, secret isolation, and checkpoints for multi-agent workflows."
 >
   <div class="dot-grid min-h-screen">
     <Nav />
@@ -172,7 +172,7 @@ const results = await Promise.all(issues.map(async ({ branch, task }) => {
           </p>
 
           <p>
-            Shuru is a local execution layer for this. It spins up ephemeral Linux VMs using Apple's
+            lsb is a local execution layer for this. It spins up ephemeral Linux VMs using Apple's
             <a href="https://developer.apple.com/documentation/virtualization" target="_blank" rel="noopener" class="text-text hover:text-amber transition-colors">Virtualization.framework</a> and boots in about a second. Your agent harness calls the SDK from the host
             to exec commands, write files, stream process output, and watch for changes inside the VM. The agent's
             state stays on your machine. The sandbox is disposable.
@@ -218,7 +218,7 @@ const results = await Promise.all(issues.map(async ({ branch, task }) => {
 
         <div class="border-t border-dashed border-border px-8 py-6 md:px-16 md:py-8">
           <div class="grid gap-4 md:grid-cols-2">
-            <CodeBlock code={configCode} lang="json" title="shuru.json" />
+            <CodeBlock code={configCode} lang="json" title="lsb.json" />
             <CodeBlock code={sandboxCode} lang="bash" title="inside the sandbox" />
           </div>
         </div>
@@ -267,7 +267,7 @@ const results = await Promise.all(issues.map(async ({ branch, task }) => {
         <div class="border-t border-dashed border-border px-8 py-8 md:px-16 md:py-10">
           <div class="flex flex-col items-start gap-3 font-mono text-sm">
             <a
-              href="https://www.npmjs.com/package/@superhq/shuru-nodejs"
+              href="https://www.npmjs.com/package/@superhq/lsb-nodejs"
               target="_blank"
               rel="noopener"
               class="text-muted transition-colors hover:text-amber"
@@ -275,7 +275,7 @@ const results = await Promise.all(issues.map(async ({ branch, task }) => {
               CLI and Node.js binding &rarr;
             </a>
             <a
-              href="https://github.com/superhq-ai/shuru"
+              href="https://github.com/Gnosnay/local-sandbox"
               target="_blank"
               rel="noopener"
               class="text-muted transition-colors hover:text-amber"

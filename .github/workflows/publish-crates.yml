@@ -35,8 +35,8 @@ jobs:
             fi
           }
 
-          publish shuru-proto
-          publish shuru-darwin
-          publish shuru-proxy
-          publish shuru-vm
-          publish shuru-sdk
+          publish lsb-proto
+          publish lsb-platform
+          publish lsb-proxy
+          publish lsb-vm
+          publish lsb-sdk

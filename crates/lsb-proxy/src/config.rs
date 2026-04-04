@@ -1,0 +1,172 @@
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
+
+/// A host port exposed to the guest via host.lsb.internal.
+#[derive(Debug, Clone)]
+pub struct ExposeHostMapping {
+    pub host_port: u16,
+    pub guest_port: u16,
+}
+
+/// Configuration for the proxy engine.
+#[derive(Debug, Clone, Default)]
+pub struct ProxyConfig {
+    /// Secrets to inject. Key is the env var name visible to the guest.
+    /// The guest gets a random placeholder token; the proxy substitutes
+    /// the real value only when the request targets an allowed host.
+    pub secrets: HashMap<String, SecretConfig>,
+    /// Network access rules.
+    pub network: NetworkConfig,
+    /// Host ports exposed to the guest via host.lsb.internal.
+    pub expose_host: Vec<ExposeHostMapping>,
+}
+
+/// A secret that the proxy injects into HTTP requests.
+#[derive(Debug, Clone)]
+pub struct SecretConfig {
+    /// Literal secret value held on the host.
+    pub value: String,
+    /// Domain patterns where this secret may be sent (e.g., "api.openai.com").
+    /// The proxy only substitutes the placeholder on requests to these hosts.
+    pub hosts: Vec<String>,
+}
+
+/// Network access policy.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkConfig {
+    /// Allowed domain patterns. Empty = allow all.
+    /// Supports wildcards: "*.openai.com", "registry.npmjs.org".
+    pub allow: Vec<String>,
+}
+
+impl ProxyConfig {
+    /// Check if a domain is allowed by the network policy.
+    /// Empty allowlist means all domains are allowed.
+    pub fn is_domain_allowed(&self, domain: &str) -> bool {
+        if self.network.allow.is_empty() {
+            return true;
+        }
+        self.network
+            .allow
+            .iter()
+            .any(|pattern| domain_matches(pattern, domain))
+    }
+
+    /// Look up whether a connection to the gateway IP on `guest_port` should
+    /// be forwarded to a host port.
+    pub fn exposed_host_port(&self, dst_ip: Ipv4Addr, guest_port: u16) -> Option<u16> {
+        const GATEWAY: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
+        if dst_ip != GATEWAY {
+            return None;
+        }
+        self.expose_host
+            .iter()
+            .find(|mapping| mapping.guest_port == guest_port)
+            .map(|mapping| mapping.host_port)
+    }
+
+    /// Get all secret placeholder→real value mappings for a given domain.
+    pub fn secrets_for_domain(
+        &self,
+        domain: &str,
+        placeholders: &HashMap<String, String>,
+    ) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        for (name, secret) in &self.secrets {
+            if secret
+                .hosts
+                .iter()
+                .any(|pattern| domain_matches(pattern, domain))
+            {
+                if let Some(placeholder) = placeholders.get(name) {
+                    result.push((placeholder.clone(), secret.value.clone()));
+                }
+            }
+        }
+        result
+    }
+}
+
+/// Simple wildcard domain matching.
+/// "*.example.com" matches "api.example.com" but not "example.com".
+/// "example.com" matches exactly "example.com".
+fn domain_matches(pattern: &str, domain: &str) -> bool {
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        domain.ends_with(suffix)
+            && domain.len() > suffix.len()
+            && domain.as_bytes()[domain.len() - suffix.len() - 1] == b'.'
+    } else {
+        pattern == domain
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_domain_matching() {
+        assert!(domain_matches("example.com", "example.com"));
+        assert!(!domain_matches("example.com", "api.example.com"));
+        assert!(domain_matches("*.example.com", "api.example.com"));
+        assert!(domain_matches("*.example.com", "deep.api.example.com"));
+        assert!(!domain_matches("*.example.com", "example.com"));
+        assert!(!domain_matches("*.example.com", "notexample.com"));
+    }
+
+    #[test]
+    fn test_secrets_for_domain_uses_literal_values() {
+        let mut config = ProxyConfig::default();
+        config.secrets.insert(
+            "API_KEY".into(),
+            SecretConfig {
+                value: "sk-test".into(),
+                hosts: vec!["api.openai.com".into()],
+            },
+        );
+
+        let placeholders = HashMap::from([("API_KEY".into(), "lsb_tok_123".into())]);
+
+        assert_eq!(
+            config.secrets_for_domain("api.openai.com", &placeholders),
+            vec![("lsb_tok_123".into(), "sk-test".into())]
+        );
+        assert!(config
+            .secrets_for_domain("api.anthropic.com", &placeholders)
+            .is_empty());
+    }
+
+    #[test]
+    fn test_exposed_host_port() {
+        let config = ProxyConfig {
+            expose_host: vec![
+                ExposeHostMapping {
+                    host_port: 3000,
+                    guest_port: 8080,
+                },
+                ExposeHostMapping {
+                    host_port: 5432,
+                    guest_port: 5432,
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config.exposed_host_port(Ipv4Addr::new(10, 0, 0, 1), 8080),
+            Some(3000)
+        );
+        assert_eq!(
+            config.exposed_host_port(Ipv4Addr::new(10, 0, 0, 1), 5432),
+            Some(5432)
+        );
+        assert_eq!(
+            config.exposed_host_port(Ipv4Addr::new(10, 0, 0, 1), 9999),
+            None
+        );
+        assert_eq!(
+            config.exposed_host_port(Ipv4Addr::new(1, 2, 3, 4), 8080),
+            None
+        );
+    }
+}

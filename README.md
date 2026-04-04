@@ -1,43 +1,44 @@
-# shuru
+# lsb
 
-Local-first microVM sandbox for AI agents on macOS.
+lsb (Local SandBox) is a local-first microVM sandbox for AI agents on macOS.
 
-Shuru boots lightweight Linux VMs using Apple's Virtualization.framework. Each sandbox is ephemeral: the rootfs resets on every run, giving agents a disposable environment to execute code, install packages, and run tools without touching your host.
+lsb boots lightweight Linux VMs using Apple's Virtualization.framework. Each sandbox is ephemeral: the rootfs resets on every run, giving agents a disposable environment to execute code, install packages, and run tools without touching your host.
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later on Apple Silicon
-- `cmake` is required when building from source because `shuru-proxy` now links BoringSSL for upstream TLS
+- macOS 14 (Sonoma) or later on Apple Silicon or Intel
+- `cmake` is required when building from source because `lsb-proxy` now links BoringSSL for upstream TLS
 
 ## Install
 
 ```sh
-brew tap superhq-ai/tap && brew install shuru
+curl -fsSL https://raw.githubusercontent.com/Gnosnay/local-sandbox/main/install.sh | sh
 ```
 
-Or via the install script:
+Or build from source:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/superhq-ai/shuru/main/install.sh | sh
+cargo build -p lsb-cli --release
+codesign --entitlements lsb.entitlements --force -s - target/release/lsb
 ```
 
 ## Usage
 
 ```sh
 # Interactive shell
-shuru run
+lsb run
 
 # Run a command
-shuru run -- echo hello
+lsb run -- echo hello
 
 # With network access
-shuru run --allow-net
+lsb run --allow-net
 
 # Restrict to specific hosts
-shuru run --allow-net --allow-host api.openai.com --allow-host registry.npmjs.org
+lsb run --allow-net --allow-host api.openai.com --allow-host registry.npmjs.org
 
 # Custom resources
-shuru run --cpus 4 --memory 4096 --disk-size 8192 -- make -j4
+lsb run --cpus 4 --memory 4096 --disk-size 8192 -- make -j4
 ```
 
 ### Directory mounts
@@ -46,15 +47,15 @@ Share host directories into the VM using VirtioFS. The host directory is read-on
 
 ```sh
 # Mount a directory (guest can write, host is untouched)
-shuru run --mount ./src:/workspace -- ls /workspace
+lsb run --mount ./src:/workspace -- ls /workspace
 
 # Multiple mounts
-shuru run --mount ./src:/workspace --mount ./data:/data -- sh
+lsb run --mount ./src:/workspace --mount ./data:/data -- sh
 ```
 
-Mounts can also be set in `shuru.json` (see [Config file](#config-file)).
+Mounts can also be set in `lsb.json` (see [Config file](#config-file)).
 
-> **Note:** Directory mounts require checkpoints created on v0.1.11+. Existing checkpoints work normally for all other features. Run `shuru upgrade` to get the latest version.
+> **Note:** Directory mounts require checkpoints created on v0.1.11+. Existing checkpoints work normally for all other features. Run `lsb upgrade` to get the latest version.
 
 ### Port forwarding
 
@@ -62,17 +63,17 @@ Forward host ports to guest ports over vsock. Works without `--allow-net` — th
 
 ```sh
 # Install python3 into a checkpoint, then serve with port forwarding
-shuru checkpoint create py --allow-net -- apt-get install -y python3
-shuru run --from py -p 8080:8000 -- python3 -m http.server 8000
+lsb checkpoint create py --allow-net -- apt-get install -y python3
+lsb run --from py -p 8080:8000 -- python3 -m http.server 8000
 
 # From the host (in another terminal)
 curl http://127.0.0.1:8080/
 
 # Multiple ports
-shuru run -p 8080:80 -p 8443:443 -- nginx
+lsb run -p 8080:80 -p 8443:443 -- nginx
 ```
 
-Port forwards can also be set in `shuru.json` (see [Config file](#config-file)).
+Port forwards can also be set in `lsb.json` (see [Config file](#config-file)).
 
 ### Checkpoints
 
@@ -80,17 +81,17 @@ Checkpoints save the disk state so you can reuse an environment across runs.
 
 ```sh
 # Set up an environment and save it
-shuru checkpoint create myenv --allow-net -- sh -c 'apt-get install -y python3 gcc'
+lsb checkpoint create myenv --allow-net -- sh -c 'apt-get install -y python3 gcc'
 
 # Run from a checkpoint (ephemeral -- changes are discarded)
-shuru run --from myenv -- python3 script.py
+lsb run --from myenv -- python3 script.py
 
 # Branch from an existing checkpoint
-shuru checkpoint create myenv2 --from myenv --allow-net -- sh -c 'pip install numpy'
+lsb checkpoint create myenv2 --from myenv --allow-net -- sh -c 'pip install numpy'
 
 # List and delete
-shuru checkpoint list
-shuru checkpoint delete myenv
+lsb checkpoint list
+lsb checkpoint delete myenv
 ```
 
 ### Secrets
@@ -99,10 +100,10 @@ Secrets keep API keys on the host. The guest receives a random placeholder token
 
 ```sh
 # Inject a secret via CLI
-shuru run --allow-net --secret API_KEY=sk-your-openai-key@api.openai.com -- curl https://api.openai.com/v1/models
+lsb run --allow-net --secret API_KEY=sk-your-openai-key@api.openai.com -- curl https://api.openai.com/v1/models
 
 # Multiple secrets
-shuru run --allow-net \
+lsb run --allow-net \
   --secret API_KEY=sk-your-openai-key@api.openai.com \
   --secret GH_TOKEN=github_pat_your_token@api.github.com \
   -- sh
@@ -110,11 +111,11 @@ shuru run --allow-net \
 
 Format: `NAME=VALUE@host1,host2` — `NAME` is the env var the guest sees, `VALUE` is the literal secret held on the host, and hosts are where the proxy substitutes it.
 
-Secrets can also be set in `shuru.json` (see [Config file](#config-file)).
+Secrets can also be set in `lsb.json` (see [Config file](#config-file)).
 
 ### Config file
 
-Shuru loads `shuru.json` from the current directory (or `--config PATH`). All fields are optional; CLI flags take precedence.
+lsb loads `lsb.json` from the current directory (or `--config PATH`). All fields are optional; CLI flags take precedence.
 
 ```json
 {
@@ -141,14 +142,14 @@ The `network.allow` list restricts which hosts the guest can reach. Omit it to a
 
 ## Node.js Binding
 
-Use shuru programmatically from Node.js or TypeScript with the [`@superhq/shuru-nodejs`](https://www.npmjs.com/package/@superhq/shuru-nodejs) package.
+Use lsb programmatically from Node.js or TypeScript with the [`@superhq/lsb-nodejs`](https://www.npmjs.com/package/@superhq/lsb-nodejs) package.
 
 ```sh
-npm install @superhq/shuru-nodejs
+npm install @superhq/lsb-nodejs
 ```
 
 ```ts
-import { Sandbox } from "@superhq/shuru-nodejs";
+import { Sandbox } from "@superhq/lsb-nodejs";
 
 const sb = await Sandbox.start({ from: "python-env" });
 
@@ -162,17 +163,22 @@ See the [Node.js binding README](bindings/nodejs/README.md) for full API docs an
 
 ## Agent Skill
 
-Shuru ships as an [agent skill](https://agentskills.io) so AI agents (Claude Code, Cursor, Copilot, etc.) can use it automatically.
+lsb ships as an [agent skill](https://agentskills.io) so AI agents (Claude Code, Cursor, Copilot, etc.) can use it automatically.
 
 ```sh
 # Install via Vercel's skills CLI
-npx skills add superhq-ai/shuru
+npx skills add Gnosnay/local-sandbox
 
 # Or manually copy into your project
-cp -r skills/shuru .claude/skills/shuru
+cp -r skills/lsb .claude/skills/lsb
 ```
 
-Once installed, agents will use `shuru run` whenever they need sandboxed execution.
+Once installed, agents will use `lsb run` whenever they need sandboxed execution.
+
+## Credits
+
+This repository is a hard fork of [`superhq-ai/shuru`](https://github.com/superhq-ai/shuru).
+Credit for the original architecture and implementation belongs to the Shuru project and its contributors.
 
 ## Changelog
 
@@ -180,4 +186,4 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes and breaking changes.
 
 ## Bugs
 
-File issues at [github.com/superhq-ai/shuru/issues](https://github.com/superhq-ai/shuru/issues).
+File issues at [github.com/Gnosnay/local-sandbox/issues](https://github.com/Gnosnay/local-sandbox/issues).

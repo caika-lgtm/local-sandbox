@@ -36,7 +36,7 @@ test('supported builds reject mount host paths that do not exist before boot', a
     return
   }
 
-  const parentDir = mkdtempSync(join(tmpdir(), 'shuru-nodejs-missing-mount-'))
+  const parentDir = mkdtempSync(join(tmpdir(), 'lsb-nodejs-missing-mount-'))
   const missingHostPath = join(parentDir, 'does-not-exist')
   t.teardown(() => {
     rmSync(parentDir, { recursive: true, force: true })

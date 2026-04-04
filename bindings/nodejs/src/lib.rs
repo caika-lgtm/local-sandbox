@@ -14,12 +14,12 @@ use napi::threadsafe_function::{
   ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use shuru_sdk::{
+use lsb_sdk::{
   DirEntry as NativeDirEntry, MountConfig, PortMapping, SandboxConfig,
   SecretConfig as NativeSecretConfig, StatResponse as NativeStatResponse,
 };
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use shuru_vm::PortForwardHandle;
+use lsb_vm::PortForwardHandle;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use tokio::sync::{oneshot, watch};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -146,7 +146,7 @@ type ExitThreadsafeFunction = ThreadsafeFunction<i32, Unknown<'static>, i32, Sta
 enum VmCommand {
   Exec {
     argv: Vec<String>,
-    reply: oneshot::Sender<anyhow::Result<shuru_sdk::ExecResult>>,
+    reply: oneshot::Sender<anyhow::Result<lsb_sdk::ExecResult>>,
   },
   ReadFile {
     path: String,
@@ -159,11 +159,11 @@ enum VmCommand {
   },
   ReadDir {
     path: String,
-    reply: oneshot::Sender<anyhow::Result<shuru_proto::ReadDirResponse>>,
+    reply: oneshot::Sender<anyhow::Result<lsb_proto::ReadDirResponse>>,
   },
   Stat {
     path: String,
-    reply: oneshot::Sender<anyhow::Result<shuru_proto::StatResponse>>,
+    reply: oneshot::Sender<anyhow::Result<lsb_proto::StatResponse>>,
   },
   Mkdir {
     path: String,
@@ -225,7 +225,7 @@ impl RuntimeSandbox {
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
 
     std::thread::Builder::new()
-      .name("shuru-nodejs-vm".into())
+      .name("lsb-nodejs-vm".into())
       .spawn(move || match boot_vm(config, instanceID) {
         Ok((sandbox, instance_dir, proxy_handle, fwd_handle)) => {
           if ready_tx.send(Ok(instance_dir.clone())).is_err() {
@@ -245,7 +245,7 @@ impl RuntimeSandbox {
     })
   }
 
-  async fn exec(&self, argv: Vec<String>) -> anyhow::Result<shuru_sdk::ExecResult> {
+  async fn exec(&self, argv: Vec<String>) -> anyhow::Result<lsb_sdk::ExecResult> {
     let (reply_tx, reply_rx) = oneshot::channel();
     self
       .cmd_tx
@@ -282,7 +282,7 @@ impl RuntimeSandbox {
     reply_rx.await?
   }
 
-  async fn read_dir(&self, path: String) -> anyhow::Result<shuru_proto::ReadDirResponse> {
+  async fn read_dir(&self, path: String) -> anyhow::Result<lsb_proto::ReadDirResponse> {
     let (reply_tx, reply_rx) = oneshot::channel();
     self
       .cmd_tx
@@ -294,7 +294,7 @@ impl RuntimeSandbox {
     reply_rx.await?
   }
 
-  async fn stat(&self, path: String) -> anyhow::Result<shuru_proto::StatResponse> {
+  async fn stat(&self, path: String) -> anyhow::Result<lsb_proto::StatResponse> {
     let (reply_tx, reply_rx) = oneshot::channel();
     self
       .cmd_tx
@@ -841,13 +841,13 @@ impl Sandbox {
         .map_err(to_napi_error)?;
 
       std::thread::Builder::new()
-        .name("shuru-nodejs-watch".into())
+        .name("lsb-nodejs-watch".into())
         .spawn(move || {
           let mut reader = BufReader::new(stream);
           loop {
-            match shuru_proto::frame::read_frame(&mut reader) {
-              Ok(Some((shuru_proto::frame::WATCH_EVENT, payload))) => {
-                if let Ok(event) = serde_json::from_slice::<shuru_proto::WatchEvent>(&payload) {
+            match lsb_proto::frame::read_frame(&mut reader) {
+              Ok(Some((lsb_proto::frame::WATCH_EVENT, payload))) => {
+                if let Ok(event) = serde_json::from_slice::<lsb_proto::WatchEvent>(&payload) {
                   let _ = tsfn.call(
                     FileChangeEvent {
                       path: event.path,
@@ -1173,18 +1173,18 @@ fn boot_vm(
   config: SandboxConfig,
   instanceID: Option<String>,
 ) -> anyhow::Result<(
-  shuru_vm::Sandbox,
+  lsb_vm::Sandbox,
   String,
-  Option<shuru_proxy::ProxyHandle>,
+  Option<lsb_proxy::ProxyHandle>,
   Option<PortForwardHandle>,
 )> {
-  let data_dir = config.data_dir.unwrap_or_else(shuru_vm::default_data_dir);
+  let data_dir = config.data_dir.unwrap_or_else(lsb_vm::default_data_dir);
   let kernel_path = format!("{data_dir}/Image");
   let rootfs_path = format!("{data_dir}/rootfs.ext4");
   let initrd_path = format!("{data_dir}/initramfs.cpio.gz");
 
   if !std::path::Path::new(&kernel_path).exists() {
-    bail!("Kernel not found at {kernel_path}. Run `shuru init` to download.");
+    bail!("Kernel not found at {kernel_path}. Run `lsb init` to download.");
   }
 
   let source = match &config.from {
@@ -1197,7 +1197,7 @@ fn boot_vm(
     }
     None => {
       if !std::path::Path::new(&rootfs_path).exists() {
-        bail!("Rootfs not found at {rootfs_path}. Run `shuru init` to download.");
+        bail!("Rootfs not found at {rootfs_path}. Run `lsb init` to download.");
       }
       rootfs_path
     }
@@ -1231,18 +1231,18 @@ fn boot_vm(
   };
 
   let (vm_fd, proxy_handle) = if config.allow_net {
-    let mut proxy_config = shuru_proxy::config::ProxyConfig::default();
+    let mut proxy_config = lsb_proxy::config::ProxyConfig::default();
     proxy_config.secrets = config.secrets;
     proxy_config.network.allow = config.allowed_hosts;
 
-    let (vm_fd, host_fd) = shuru_proxy::create_socketpair()?;
-    let handle = shuru_proxy::start(host_fd, proxy_config)?;
+    let (vm_fd, host_fd) = lsb_proxy::create_socketpair()?;
+    let handle = lsb_proxy::start(host_fd, proxy_config)?;
     (Some(vm_fd), Some(handle))
   } else {
     (None, None)
   };
 
-  let mut builder = shuru_vm::Sandbox::builder()
+  let mut builder = lsb_vm::Sandbox::builder()
     .kernel(&kernel_path)
     .rootfs(&work_rootfs)
     .cpus(config.cpus)
@@ -1271,7 +1271,7 @@ fn boot_vm(
   if let Some(ref handle) = proxy_handle {
     if !handle.placeholders.is_empty() {
       sandbox.write_file(
-        "/usr/local/share/ca-certificates/shuru-proxy.crt",
+        "/usr/local/share/ca-certificates/lsb-proxy.crt",
         &handle.ca_cert_pem,
       )?;
       sandbox.exec(
@@ -1287,10 +1287,10 @@ fn boot_vm(
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn run_vm_loop(
-  sandbox: shuru_vm::Sandbox,
+  sandbox: lsb_vm::Sandbox,
   instance_dir: &str,
   cmd_rx: std::sync::mpsc::Receiver<VmCommand>,
-  proxy_handle: Option<shuru_proxy::ProxyHandle>,
+  proxy_handle: Option<lsb_proxy::ProxyHandle>,
   _fwd_handle: Option<PortForwardHandle>,
 ) {
   let secret_env = proxy_handle
@@ -1371,7 +1371,7 @@ fn run_vm_loop(
       }
       VmCommand::Checkpoint { name, reply } => {
         let result = (|| -> anyhow::Result<()> {
-          let checkpoints_dir = format!("{}/checkpoints", shuru_vm::default_data_dir());
+          let checkpoints_dir = format!("{}/checkpoints", lsb_vm::default_data_dir());
           std::fs::create_dir_all(&checkpoints_dir)?;
           let checkpoint_path = format!("{checkpoints_dir}/{name}.ext4");
           let work_rootfs = format!("{instance_dir}/rootfs.ext4");
@@ -1392,16 +1392,16 @@ fn run_vm_loop(
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn exec_command(
-  sandbox: &shuru_vm::Sandbox,
+  sandbox: &lsb_vm::Sandbox,
   argv: &[String],
   env: &HashMap<String, String>,
-) -> anyhow::Result<shuru_sdk::ExecResult> {
+) -> anyhow::Result<lsb_sdk::ExecResult> {
   let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
   let mut stdout = Vec::new();
   let mut stderr = Vec::new();
   let exit_code = sandbox.exec_with_env(&argv_refs, env, &mut stdout, &mut stderr)?;
 
-  Ok(shuru_sdk::ExecResult {
+  Ok(lsb_sdk::ExecResult {
     stdout: String::from_utf8_lossy(&stdout).to_string(),
     stderr: String::from_utf8_lossy(&stderr).to_string(),
     exit_code,
@@ -1419,7 +1419,7 @@ fn spawn_process_threads(
   let state_for_thread = state.clone();
 
   let _ = std::thread::Builder::new()
-    .name(format!("shuru-nodejs-process-{}", state.pid))
+    .name(format!("lsb-nodejs-process-{}", state.pid))
     .spawn(move || {
       let mut reader = match stream.try_clone() {
         Ok(value) => BufReader::new(value),
@@ -1436,14 +1436,14 @@ fn spawn_process_threads(
         while !closed_for_input.load(Ordering::SeqCst) {
           match input_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(ProcessInput::Stdin(data)) => {
-              if shuru_proto::frame::write_frame(&mut writer, shuru_proto::frame::STDIN, &data)
+              if lsb_proto::frame::write_frame(&mut writer, lsb_proto::frame::STDIN, &data)
                 .is_err()
               {
                 break;
               }
             }
             Ok(ProcessInput::Kill) => {
-              let _ = shuru_proto::frame::write_frame(&mut writer, shuru_proto::frame::KILL, &[]);
+              let _ = lsb_proto::frame::write_frame(&mut writer, lsb_proto::frame::KILL, &[]);
               break;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -1453,16 +1453,16 @@ fn spawn_process_threads(
       });
 
       loop {
-        match shuru_proto::frame::read_frame(&mut reader) {
-          Ok(Some((shuru_proto::frame::STDOUT, data))) => state_for_thread.emit_stdout(data),
-          Ok(Some((shuru_proto::frame::STDERR, data))) => state_for_thread.emit_stderr(data),
-          Ok(Some((shuru_proto::frame::EXIT, data))) => {
-            let code = shuru_proto::frame::parse_exit_code(&data).unwrap_or(0);
+        match lsb_proto::frame::read_frame(&mut reader) {
+          Ok(Some((lsb_proto::frame::STDOUT, data))) => state_for_thread.emit_stdout(data),
+          Ok(Some((lsb_proto::frame::STDERR, data))) => state_for_thread.emit_stderr(data),
+          Ok(Some((lsb_proto::frame::EXIT, data))) => {
+            let code = lsb_proto::frame::parse_exit_code(&data).unwrap_or(0);
             let _ = exited_tx.send(Some(code));
             state_for_thread.emit_exit(code);
             break;
           }
-          Ok(Some((shuru_proto::frame::ERROR, data))) => {
+          Ok(Some((lsb_proto::frame::ERROR, data))) => {
             state_for_thread.emit_stderr(data);
             let _ = exited_tx.send(Some(1));
             state_for_thread.emit_exit(1);
@@ -1580,7 +1580,7 @@ fn parse_secret(secret: SecretConfig) -> anyhow::Result<NativeSecretConfig> {
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-fn map_exec_result(result: shuru_sdk::ExecResult) -> ExecResult {
+fn map_exec_result(result: lsb_sdk::ExecResult) -> ExecResult {
   ExecResult {
     stdout: result.stdout,
     stderr: result.stderr,
@@ -1613,7 +1613,7 @@ fn map_stat_result(stat: NativeStatResponse) -> StatResult {
 fn unsupported_platform_error() -> Error {
   Error::new(
     Status::GenericFailure,
-    "Shuru native bindings currently support only macOS on Apple Silicon (aarch64). This package may install elsewhere, but Sandbox.start() is unsupported there.".to_string(),
+    "lsb native bindings currently support only macOS on Apple Silicon (aarch64). This package may install elsewhere, but Sandbox.start() is unsupported there.".to_string(),
   )
 }
 

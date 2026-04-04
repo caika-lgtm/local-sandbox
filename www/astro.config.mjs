@@ -2,7 +2,7 @@ import { defineConfig } from "astro/config";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-	site: "https://shuru.run",
+	site: "https://lsb.run",
 	vite: {
 		plugins: [tailwindcss()],
 	},

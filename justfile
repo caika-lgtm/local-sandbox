@@ -1,34 +1,34 @@
-binary := "target/debug/shuru"
+binary := "target/debug/lsb"
 
 # List available recipes
 default:
     @just --list
 
 # Build the guest init binary for the host platform by default.
-# Set SHURU_PLATFORM=<platform-id> to cross-build.
+# Set LSB_PLATFORM=<platform-id> to cross-build.
 build-guest:
-    SHURU_PLATFORM="${SHURU_PLATFORM:-}" cargo run -p xtask -- build-guest
+    LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -p xtask -- build-guest
 
 # Build the guest kernel image via xtask.
-# Set SHURU_PLATFORM=<platform-id> to override the host default.
+# Set LSB_PLATFORM=<platform-id> to override the host default.
 build-kernel:
-    SHURU_PLATFORM="${SHURU_PLATFORM:-}" cargo run -p xtask -- build-kernel
+    LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -p xtask -- build-kernel
 
 # Build the CLI binary (debug)
 build-cli:
-    cargo build -p shuru-cli
+    cargo build -p lsb-cli
 
 # Codesign the CLI binary with the selected platform entitlement.
 codesign:
-    codesign --entitlements "$(SHURU_PLATFORM="${SHURU_PLATFORM:-}" cargo run -q -p xtask -- platform-meta --format env | sed -n 's/^SHURU_CODESIGN_ENTITLEMENTS=//p')" --force -s - {{ binary }}
+    codesign --entitlements "$(LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -q -p xtask -- platform-meta --format env | sed -n 's/^LSB_CODESIGN_ENTITLEMENTS=//p')" --force -s - {{ binary }}
 
 # Build everything: guest + CLI + codesign
 build: build-guest build-cli codesign
 
 # Prepare the rootfs, kernel, and initramfs (requires Docker).
-# Set SHURU_PLATFORM=<platform-id> to override the host default.
+# Set LSB_PLATFORM=<platform-id> to override the host default.
 prepare-rootfs:
-    SHURU_PLATFORM="${SHURU_PLATFORM:-}" cargo run -p xtask -- prepare-rootfs
+    LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -p xtask -- prepare-rootfs
 
 # Run a command inside the VM
 run *args:
@@ -51,10 +51,10 @@ clippy:
 
 # Install the binary to ~/.local/bin with codesign
 install: build-guest
-    cargo build -p shuru-cli --release
-    codesign --entitlements "$(SHURU_PLATFORM="${SHURU_PLATFORM:-}" cargo run -q -p xtask -- platform-meta --format env | sed -n 's/^SHURU_CODESIGN_ENTITLEMENTS=//p')" --force -s - target/release/shuru
+    cargo build -p lsb-cli --release
+    codesign --entitlements "$(LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -q -p xtask -- platform-meta --format env | sed -n 's/^LSB_CODESIGN_ENTITLEMENTS=//p')" --force -s - target/release/lsb
     mkdir -p ~/.local/bin
-    cp target/release/shuru ~/.local/bin/shuru
+    cp target/release/lsb ~/.local/bin/lsb
 
 # Tag and push a release (triggers GitHub Actions)
 release version:

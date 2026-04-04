@@ -17,5 +17,5 @@ jobs:
           targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: cmake --version
-      - run: cargo check -p shuru-platform -p shuru-vm -p shuru-sdk -p shuru-cli -p xtask
-      - run: cargo check -p shuru-platform -p shuru-vm -p shuru-sdk -p shuru-cli -p xtask --target x86_64-apple-darwin
+      - run: cargo check -p lsb-platform -p lsb-vm -p lsb-sdk -p lsb-cli -p xtask
+      - run: cargo check -p lsb-platform -p lsb-vm -p lsb-sdk -p lsb-cli -p xtask --target x86_64-apple-darwin

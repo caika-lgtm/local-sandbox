@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Result};
-use shuru_platform::{default_data_dir, PlatformSpec};
+use lsb_platform::{default_data_dir, PlatformSpec};
 
 use crate::args::{flag_value, required_flag_value, resolve_platform};
 use crate::context::{resolved_data_dir, run_command, workspace_root};
@@ -46,8 +46,13 @@ pub fn package_release(args: &[String]) -> Result<()> {
     let platform = resolve_platform(args)?;
     let artifact = required_flag_value(args, "--artifact")?;
     let version = required_flag_value(args, "--version")?;
-    let output_dir = PathBuf::from(flag_value(args, "--output-dir").unwrap_or("."));
     let root = workspace_root();
+    let output_dir = PathBuf::from(flag_value(args, "--output-dir").unwrap_or("."));
+    let output_dir = if output_dir.is_absolute() {
+        output_dir
+    } else {
+        root.join(output_dir)
+    };
 
     fs::create_dir_all(&output_dir)?;
 
@@ -59,21 +64,21 @@ pub fn package_release(args: &[String]) -> Result<()> {
 }
 
 fn print_env(platform: &PlatformSpec, version: Option<&str>) {
-    println!("SHURU_PLATFORM_ID={}", platform.id);
-    println!("SHURU_HOST_TARGET={}", platform.host_target);
-    println!("SHURU_GUEST_TARGET={}", platform.guest_target);
-    println!("SHURU_DOCKER_PLATFORM={}", platform.docker_platform);
-    println!("SHURU_KERNEL_ARCH={}", platform.kernel_arch);
-    println!("SHURU_DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch);
-    println!("SHURU_DEFAULT_DATA_DIR={}", default_data_dir());
+    println!("LSB_PLATFORM_ID={}", platform.id);
+    println!("LSB_HOST_TARGET={}", platform.host_target);
+    println!("LSB_GUEST_TARGET={}", platform.guest_target);
+    println!("LSB_DOCKER_PLATFORM={}", platform.docker_platform);
+    println!("LSB_KERNEL_ARCH={}", platform.kernel_arch);
+    println!("LSB_DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch);
+    println!("LSB_DEFAULT_DATA_DIR={}", default_data_dir());
     if let Some(entitlements) = platform.codesign_entitlements {
-        println!("SHURU_CODESIGN_ENTITLEMENTS={entitlements}");
+        println!("LSB_CODESIGN_ENTITLEMENTS={entitlements}");
     }
     if let Some(version) = version {
-        println!("SHURU_RELEASE_TAG={}", platform.release_tag(version));
-        println!("SHURU_CLI_TARBALL={}", platform.cli_tarball_name(version));
+        println!("LSB_RELEASE_TAG={}", platform.release_tag(version));
+        println!("LSB_CLI_TARBALL={}", platform.cli_tarball_name(version));
         println!(
-            "SHURU_OS_IMAGE_TARBALL={}",
+            "LSB_OS_IMAGE_TARBALL={}",
             platform.os_image_tarball_name(version)
         );
     }
@@ -86,7 +91,7 @@ fn package_cli(
     output_dir: &Path,
 ) -> Result<()> {
     let tarball = output_dir.join(platform.cli_tarball_name(version));
-    run_tar(root, &tarball, &["-C", "target/release", "shuru"])
+    run_tar(root, &tarball, &["-C", "target/release", "lsb"])
 }
 
 fn package_os_image(platform: &PlatformSpec, version: &str, output_dir: &Path) -> Result<()> {

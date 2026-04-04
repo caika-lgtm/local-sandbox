@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use anyhow::{bail, Result};
-use shuru_platform::PlatformSpec;
+use lsb_platform::PlatformSpec;
 
 use crate::args::resolve_platform;
 use crate::context::{ensure_docker_available, env_value, is_macos, run_command, workspace_root};
@@ -19,15 +19,15 @@ pub fn build_guest(args: &[String]) -> Result<()> {
 
 pub fn build_guest_for_platform(platform: &PlatformSpec) -> Result<()> {
     let guest_target =
-        env_value("SHURU_GUEST_TARGET").unwrap_or_else(|| platform.guest_target.to_string());
+        env_value("LSB_GUEST_TARGET").unwrap_or_else(|| platform.guest_target.to_string());
     let workspace_root = workspace_root();
     let guest_binary = workspace_root
         .join("target")
         .join(&guest_target)
         .join("release")
-        .join("shuru-guest");
+        .join("lsb-guest");
 
-    println!("==> Building shuru-guest for {guest_target}");
+    println!("==> Building lsb-guest for {guest_target}");
 
     if let Some(builder) = docker_guest_builder(platform, &guest_target) {
         ensure_docker_available(
@@ -56,11 +56,11 @@ pub fn build_guest_for_platform(platform: &PlatformSpec) -> Result<()> {
                 .arg("cargo")
                 .arg("build")
                 .arg("-p")
-                .arg("shuru-guest")
+                .arg("lsb-guest")
                 .arg("--target")
                 .arg(&guest_target)
                 .arg("--release"),
-            "build shuru-guest in Docker",
+            "build lsb-guest in Docker",
         )?;
     } else {
         run_command(
@@ -68,11 +68,11 @@ pub fn build_guest_for_platform(platform: &PlatformSpec) -> Result<()> {
                 .current_dir(&workspace_root)
                 .arg("build")
                 .arg("-p")
-                .arg("shuru-guest")
+                .arg("lsb-guest")
                 .arg("--target")
                 .arg(&guest_target)
                 .arg("--release"),
-            "build shuru-guest",
+            "build lsb-guest",
         )?;
     }
 

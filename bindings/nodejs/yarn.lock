@@ -1301,9 +1301,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@superhq/shuru-nodejs@workspace:.":
+"@superhq/lsb-nodejs@workspace:.":
   version: 0.0.0-use.local
-  resolution: "@superhq/shuru-nodejs@workspace:."
+  resolution: "@superhq/lsb-nodejs@workspace:."
   dependencies:
     "@napi-rs/cli": "npm:^3.2.0"
     "@oxc-node/core": "npm:^0.0.35"

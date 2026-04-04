@@ -1,0 +1,16 @@
+[package]
+name = "lsb-vm"
+version = "0.0.1"
+edition = "2021"
+description = "High-level VM management for lsb"
+license = "Apache-2.0"
+repository = "https://github.com/Gnosnay/local-sandbox"
+
+[dependencies]
+lsb-platform = { version = "0.0.1", path = "../lsb-platform" }
+lsb-proto = { version = "0.0.1", path = "../lsb-proto" }
+anyhow = "1"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"

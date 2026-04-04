@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="superhq-ai/shuru"
+REPO="Gnosnay/local-sandbox"
 INSTALL_DIR="$HOME/.local/bin"
 
 ##### Platform checks
@@ -10,7 +10,7 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 if [ "$OS" != "Darwin" ]; then
-    echo "Error: shuru only supports macOS. Detected: $OS" >&2
+    echo "Error: lsb only supports macOS. Detected: $OS" >&2
     exit 1
 fi
 
@@ -19,11 +19,10 @@ case "$OS:$ARCH" in
         CLI_SUFFIX="darwin-aarch64"
         ;;
     Darwin:x86_64)
-        echo "Error: shuru does not support Intel macOS yet. Detected: $ARCH" >&2
-        exit 1
+        CLI_SUFFIX="darwin-x86_64"
         ;;
     *)
-        echo "Error: shuru does not support this platform yet. Detected: $OS/$ARCH" >&2
+        echo "Error: lsb does not support this platform yet. Detected: $OS/$ARCH" >&2
         exit 1
         ;;
 esac
@@ -43,7 +42,7 @@ echo "Latest version: $VERSION"
 
 ##### Download and extract
 
-TARBALL="shuru-v${VERSION}-${CLI_SUFFIX}.tar.gz"
+TARBALL="lsb-v${VERSION}-${CLI_SUFFIX}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${TAG}/${TARBALL}"
 
 TMPDIR=$(mktemp -d)
@@ -54,11 +53,11 @@ curl -fsSL "$URL" -o "$TMPDIR/$TARBALL"
 
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$TMPDIR/$TARBALL" -C "$INSTALL_DIR"
-chmod +x "$INSTALL_DIR/shuru"
-xattr -d com.apple.quarantine "$INSTALL_DIR/shuru" 2>/dev/null || true
+chmod +x "$INSTALL_DIR/lsb"
+xattr -d com.apple.quarantine "$INSTALL_DIR/lsb" 2>/dev/null || true
 
 echo ""
-echo "Installed shuru $VERSION to $INSTALL_DIR/shuru"
+echo "Installed lsb $VERSION to $INSTALL_DIR/lsb"
 
 ##### PATH check
 

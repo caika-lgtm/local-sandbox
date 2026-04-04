@@ -5,7 +5,7 @@ use std::process::{self, Command};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
-use shuru_platform::default_data_dir;
+use lsb_platform::default_data_dir;
 
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -16,8 +16,8 @@ pub fn workspace_root() -> PathBuf {
 
 pub fn resolved_data_dir() -> PathBuf {
     PathBuf::from(
-        env_value("SHURU_DATA_DIR")
-            .or_else(|| env_value("SHURU_DEFAULT_DATA_DIR"))
+        env_value("LSB_DATA_DIR")
+            .or_else(|| env_value("LSB_DEFAULT_DATA_DIR"))
             .unwrap_or_else(default_data_dir),
     )
 }
@@ -115,7 +115,7 @@ pub fn create_mount_dir() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before the Unix epoch")?
         .as_millis();
-    let mount_dir = env::temp_dir().join(format!("shuru-rootfs-{}-{nonce}", process::id()));
+    let mount_dir = env::temp_dir().join(format!("lsb-rootfs-{}-{nonce}", process::id()));
     fs::create_dir_all(&mount_dir)
         .with_context(|| format!("failed to create {}", mount_dir.display()))?;
     Ok(mount_dir)

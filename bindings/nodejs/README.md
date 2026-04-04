@@ -1,15 +1,15 @@
-# `@superhq/shuru-nodejs`
+# `@superhq/lsb-nodejs`
 
-Native Node.js bindings for [Shuru](https://github.com/superhq-ai/shuru), built with
+Native Node.js bindings for [lsb](https://github.com/Gnosnay/local-sandbox), built with
 [`napi-rs`](https://napi.rs/).
 
-This package is the canonical JavaScript and TypeScript entrypoint for Shuru. It wraps the
-Rust [`shuru-sdk`](../../crates/shuru-sdk) directly and exposes a Node-facing `Sandbox` API.
+This package is the canonical JavaScript and TypeScript entrypoint for lsb. It wraps the
+Rust [`lsb-sdk`](../../crates/lsb-sdk) directly and exposes a Node-facing `Sandbox` API.
 
 ## Install
 
 ```sh
-npm install @superhq/shuru-nodejs
+npm install @superhq/lsb-nodejs
 ```
 
 For local development, use Corepack to run the Yarn version pinned in
@@ -23,14 +23,14 @@ corepack yarn install
 
 - Node.js 18+
 - macOS 14+ on Apple Silicon
-- [shuru CLI](https://github.com/superhq-ai/shuru) installed
-- `Sandbox.start()` expects the Shuru runtime data directory to already exist. In the default
-  location, `~/.local/share/shuru/Image` must be present before booting a sandbox. This VM image
-  is not bundled with `@superhq/shuru-nodejs` and needs to be downloaded manually as part of your
-  Shuru runtime setup.
+- [lsb CLI](https://github.com/Gnosnay/local-sandbox) installed
+- `Sandbox.start()` expects the lsb runtime data directory to already exist. In the default
+  location, `~/.local/share/lsb/Image` must be present before booting a sandbox. This VM image
+  is not bundled with `@superhq/lsb-nodejs` and needs to be downloaded manually as part of your
+  lsb runtime setup.
 - On macOS, the `node` executable loading this SDK must be code signed with the
   `com.apple.security.virtualization` entitlement. For a project-local workflow, sign a copied
-  Node binary with [`../../shuru.entitlements`](../../shuru.entitlements), or use
+  Node binary with [`../../lsb.entitlements`](../../lsb.entitlements), or use
   [`test:signed-node`](./package.json) as a reference.
 
 ## Usage
@@ -38,9 +38,9 @@ corepack yarn install
 ### Start a sandbox and run commands
 
 ```ts
-import { Sandbox } from '@superhq/shuru-nodejs'
+import { Sandbox } from '@superhq/lsb-nodejs'
 
-const dataDir = `${process.env.HOME}/.local/share/shuru`
+const dataDir = `${process.env.HOME}/.local/share/lsb`
 const sandbox = await Sandbox.start({
   dataDir,
   cpus: 2,
@@ -51,7 +51,7 @@ const sandbox = await Sandbox.start({
   },
 })
 
-const result = await sandbox.exec('echo hello from shuru')
+const result = await sandbox.exec('echo hello from lsb')
 console.log(result.stdout)
 
 await sandbox.writeFile('/tmp/demo.txt', 'hello')
@@ -64,7 +64,7 @@ await sandbox.stop()
 ### Pass argv directly or run through a shell
 
 ```ts
-import { Sandbox } from '@superhq/shuru-nodejs'
+import { Sandbox } from '@superhq/lsb-nodejs'
 
 const sandbox = await Sandbox.start()
 
@@ -80,11 +80,11 @@ await sandbox.stop()
 ### Inspect the guest filesystem
 
 ```ts
-import { Sandbox } from '@superhq/shuru-nodejs'
+import { Sandbox } from '@superhq/lsb-nodejs'
 
 const sandbox = await Sandbox.start()
 
-await sandbox.writeFile('/tmp/demo.txt', 'hello from shuru')
+await sandbox.writeFile('/tmp/demo.txt', 'hello from lsb')
 
 const entries = await sandbox.readDir('/tmp')
 const stat = await sandbox.stat('/tmp/demo.txt')
@@ -99,7 +99,7 @@ await sandbox.stop()
 ### Save and resume from a checkpoint
 
 ```ts
-import { Sandbox } from '@superhq/shuru-nodejs'
+import { Sandbox } from '@superhq/lsb-nodejs'
 
 const base = await Sandbox.start()
 await base.exec('mkdir -p /workspace && echo ready > /workspace/state.txt')
@@ -115,7 +115,7 @@ await resumed.stop()
 ### Configure mounts, ports, secrets, and network policy
 
 ```ts
-import { Sandbox } from '@superhq/shuru-nodejs'
+import { Sandbox } from '@superhq/lsb-nodejs'
 
 const sandbox = await Sandbox.start({
   cpus: 4,
@@ -143,12 +143,12 @@ await sandbox.stop()
 | `cpus` | `number` | Number of vCPUs |
 | `memory` | `number` | Memory in MB |
 | `diskSize` | `number` | Disk size in MB |
-| `dataDir` | `string` | Shuru runtime data directory |
+| `dataDir` | `string` | lsb runtime data directory |
 | `allowNet` | `boolean` | Enable network access |
 | `allowedHosts` | `string[]` | Additional allowlisted hosts |
 | `ports` | `string[]` | Port forwards (`"host:guest"`) |
 | `mounts` | `Record<string, string>` | Directory mounts (`{ hostPath: guestPath }`) |
-| `secrets` | `Record<string, SecretConfig>` | Secrets injected via the Shuru proxy |
+| `secrets` | `Record<string, SecretConfig>` | Secrets injected via the lsb proxy |
 | `network` | `NetworkConfig` | Network access policy |
 
 ## Scripts
@@ -162,21 +162,21 @@ corepack yarn test:signed-node
 `corepack yarn test` always builds the native binding first, then runs AVA against the
 generated root entrypoint. The positive VM smoke test only runs when both of these are true:
 
-- Shuru runtime assets already exist in `~/.local/share/shuru` or in `SHURU_NODEJS_TEST_DATA_DIR`
+- lsb runtime assets already exist in `~/.local/share/lsb` or in `LSB_NODEJS_TEST_DATA_DIR`
   (`Image` is expected there and usually needs to be provisioned manually)
 - the current `node` executable has the `com.apple.security.virtualization` entitlement
 
 To avoid modifying your global Node installation, use [`test:signed-node`](./package.json),
 which copies the current `node` binary into `.signed-node/node`, signs that local copy with
-[`../../shuru.entitlements`](../../shuru.entitlements), prepends it to `PATH`, and then runs
+[`../../lsb.entitlements`](../../lsb.entitlements), prepends it to `PATH`, and then runs
 the local `napi build --platform` plus `ava` commands through that signed Node:
 
 ```sh
 corepack yarn test:signed-node
 ```
 
-If runtime assets are missing, provision them in the Shuru data directory first. The generated build outputs
-(`index.js`, `index.d.ts`, `shuru-nodejs.*.node`) are local artifacts and are ignored by git.
+If runtime assets are missing, provision them in the lsb data directory first. The generated build outputs
+(`index.js`, `index.d.ts`, `lsb-nodejs.*.node`) are local artifacts and are ignored by git.
 This explicit smoke-test entrypoint will attempt a real VM boot; if your host still refuses
 virtualization after signing the local Node copy, the command will surface that underlying error.
 

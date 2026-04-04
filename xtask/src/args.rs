@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
-use shuru_platform::{host_platform, platform_by_id, PlatformSpec};
+use lsb_platform::{host_platform, platform_by_id, PlatformSpec};
 
 use crate::context::env_value;
 
 pub fn resolve_platform(args: &[String]) -> Result<&'static PlatformSpec> {
-    let env_platform = env_value("SHURU_PLATFORM");
+    let env_platform = env_value("LSB_PLATFORM");
     let platform_id = select_platform_id(
         flag_value(args, "--platform"),
         env_platform.as_deref(),
@@ -21,7 +21,7 @@ fn select_platform_id<'a>(
     flag_platform
         .or(env_platform)
         .or(host_platform)
-        .ok_or_else(|| anyhow!("unable to infer platform; pass --platform or set SHURU_PLATFORM"))
+        .ok_or_else(|| anyhow!("unable to infer platform; pass --platform or set LSB_PLATFORM"))
 }
 
 pub fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -86,7 +86,7 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "unable to infer platform; pass --platform or set SHURU_PLATFORM"
+            "unable to infer platform; pass --platform or set LSB_PLATFORM"
         );
     }
 }

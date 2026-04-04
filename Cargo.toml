@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/shuru-cli",
-    "crates/shuru-platform",
-    "crates/shuru-proto",
-    "crates/shuru-proxy",
-    "crates/shuru-sdk",
-    "crates/shuru-vm",
-    "crates/shuru-store",
-    "crates/shuru-guest",
+    "crates/lsb-cli",
+    "crates/lsb-platform",
+    "crates/lsb-proto",
+    "crates/lsb-proxy",
+    "crates/lsb-sdk",
+    "crates/lsb-vm",
+    "crates/lsb-store",
+    "crates/lsb-guest",
     "xtask",
 ]
 

@@ -1,17 +1,17 @@
 {
-  "name": "@superhq/shuru-nodejs",
+  "name": "@superhq/lsb-nodejs",
   "version": "0.1.0",
-  "description": "Native Node.js bindings for Shuru microVM sandboxes",
+  "description": "Native Node.js bindings for lsb microVM sandboxes",
   "main": "index.js",
   "types": "index.d.ts",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/superhq-ai/shuru.git",
+    "url": "https://github.com/Gnosnay/local-sandbox.git",
     "directory": "bindings/nodejs"
   },
   "keywords": [
-    "shuru",
+    "lsb",
     "napi-rs",
     "node-addon",
     "sandbox",
@@ -23,8 +23,8 @@
     "index.js"
   ],
   "napi": {
-    "binaryName": "shuru-nodejs",
-    "packageName": "@superhq/shuru-nodejs",
+    "binaryName": "lsb-nodejs",
+    "packageName": "@superhq/lsb-nodejs",
     "targets": [
       "aarch64-apple-darwin"
     ]

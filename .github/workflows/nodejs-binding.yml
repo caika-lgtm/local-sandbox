@@ -6,20 +6,20 @@ on:
     paths:
       - ".github/workflows/nodejs-binding.yml"
       - "bindings/nodejs/**"
-      - "crates/shuru-sdk/**"
-      - "crates/shuru-vm/**"
-      - "crates/shuru-proto/**"
-      - "crates/shuru-proxy/**"
-      - "crates/shuru-darwin/**"
+      - "crates/lsb-sdk/**"
+      - "crates/lsb-vm/**"
+      - "crates/lsb-proto/**"
+      - "crates/lsb-proxy/**"
+      - "crates/lsb-platform/**"
   pull_request:
     paths:
       - ".github/workflows/nodejs-binding.yml"
       - "bindings/nodejs/**"
-      - "crates/shuru-sdk/**"
-      - "crates/shuru-vm/**"
-      - "crates/shuru-proto/**"
-      - "crates/shuru-proxy/**"
-      - "crates/shuru-darwin/**"
+      - "crates/lsb-sdk/**"
+      - "crates/lsb-vm/**"
+      - "crates/lsb-proto/**"
+      - "crates/lsb-proxy/**"
+      - "crates/lsb-platform/**"
 
 jobs:
   lint:
@@ -72,5 +72,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: bindings-nodejs-${{ matrix.target }}
-          path: bindings/nodejs/shuru-nodejs.*.node
+          path: bindings/nodejs/lsb-nodejs.*.node
           if-no-files-found: error

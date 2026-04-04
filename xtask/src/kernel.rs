@@ -2,7 +2,7 @@ use std::fs;
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Context, Result};
-use shuru_platform::PlatformSpec;
+use lsb_platform::PlatformSpec;
 
 use crate::args::resolve_platform;
 use crate::context::{
@@ -12,16 +12,16 @@ use crate::context::{
 
 const DEFAULT_KERNEL_VERSION: &str = "6.12.17";
 const KERNEL_BUILD_DOCKER_SCRIPT: &str = r#"set -e
-KERNEL_ARCH="${SHURU_KERNEL_ARCH:-arm64}"
-KERNEL_TARGET="${SHURU_KERNEL_TARGET:-Image}"
-KERNEL_OUTPUT_RELATIVE_PATH="${SHURU_KERNEL_OUTPUT_RELATIVE_PATH:-arch/${KERNEL_ARCH}/boot/Image}"
+KERNEL_ARCH="${LSB_KERNEL_ARCH:-arm64}"
+KERNEL_TARGET="${LSB_KERNEL_TARGET:-Image}"
+KERNEL_OUTPUT_RELATIVE_PATH="${LSB_KERNEL_OUTPUT_RELATIVE_PATH:-arch/${KERNEL_ARCH}/boot/Image}"
 
 apt-get update -qq > /dev/null 2>&1
 apt-get install -y -qq build-essential bc flex bison libelf-dev libssl-dev > /dev/null 2>&1
 
 cd /src
-cp /tmp/shuru_defconfig "arch/${KERNEL_ARCH}/configs/shuru_defconfig"
-make ARCH="${KERNEL_ARCH}" shuru_defconfig > /dev/null 2>&1
+cp /tmp/lsb_defconfig "arch/${KERNEL_ARCH}/configs/lsb_defconfig"
+make ARCH="${KERNEL_ARCH}" lsb_defconfig > /dev/null 2>&1
 
 echo "    Compiling kernel (this takes a few minutes)..."
 make ARCH="${KERNEL_ARCH}" -j"$(nproc)" "${KERNEL_TARGET}"
@@ -59,7 +59,7 @@ pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
         "https://cdn.kernel.org/pub/linux/kernel/v{kernel_major}.x/linux-{kernel_version}.tar.xz"
     );
 
-    println!("==> Building custom kernel {kernel_version} for Shuru");
+    println!("==> Building custom kernel {kernel_version} for lsb");
 
     if !defconfig.is_file() {
         bail!("defconfig not found at {}", defconfig.display());
@@ -99,7 +99,7 @@ pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
         copy_file(
             &defconfig,
             &source_dir.join(format!(
-                "arch/{}/configs/shuru_defconfig",
+                "arch/{}/configs/lsb_defconfig",
                 platform.kernel_arch
             )),
         )?;
@@ -107,7 +107,7 @@ pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
             Command::new("make")
                 .current_dir(&source_dir)
                 .env("ARCH", platform.kernel_arch)
-                .arg("shuru_defconfig"),
+                .arg("lsb_defconfig"),
             "configure kernel build",
         )?;
         println!("    Compiling kernel (this takes a few minutes)...");
@@ -136,16 +136,16 @@ pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
                 .arg("--platform")
                 .arg(platform.docker_platform)
                 .arg("-e")
-                .arg(format!("SHURU_KERNEL_ARCH={}", platform.kernel_arch))
+                .arg(format!("LSB_KERNEL_ARCH={}", platform.kernel_arch))
                 .arg("-e")
-                .arg(format!("SHURU_KERNEL_TARGET={}", layout.build_target))
+                .arg(format!("LSB_KERNEL_TARGET={}", layout.build_target))
                 .arg("-e")
                 .arg(format!(
-                    "SHURU_KERNEL_OUTPUT_RELATIVE_PATH={}",
+                    "LSB_KERNEL_OUTPUT_RELATIVE_PATH={}",
                     layout.output_relpath
                 ))
                 .arg("-v")
-                .arg(format!("{}:/tmp/shuru_defconfig:ro", defconfig.display()))
+                .arg(format!("{}:/tmp/lsb_defconfig:ro", defconfig.display()))
                 .arg("-v")
                 .arg(format!("{}:/src:rw", source_dir.display()))
                 .arg("-v")
@@ -167,12 +167,12 @@ pub fn build_kernel_for_platform(platform: &PlatformSpec) -> Result<()> {
 fn kernel_build_layout(platform: &PlatformSpec) -> Result<KernelBuildLayout> {
     match platform.target_arch {
         "aarch64" => Ok(KernelBuildLayout {
-            defconfig_relpath: "kernel/shuru_defconfig",
+            defconfig_relpath: "kernel/lsb_defconfig",
             build_target: "Image",
             output_relpath: "arch/arm64/boot/Image",
         }),
         "x86_64" => Ok(KernelBuildLayout {
-            defconfig_relpath: "kernel/shuru_x86_64_defconfig",
+            defconfig_relpath: "kernel/lsb_x86_64_defconfig",
             build_target: "bzImage",
             output_relpath: "arch/x86/boot/bzImage",
         }),
@@ -183,7 +183,7 @@ fn kernel_build_layout(platform: &PlatformSpec) -> Result<KernelBuildLayout> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shuru_platform::platform_by_id;
+    use lsb_platform::platform_by_id;
 
     #[test]
     fn aarch64_kernel_layout_uses_image() {
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(
             layout,
             KernelBuildLayout {
-                defconfig_relpath: "kernel/shuru_defconfig",
+                defconfig_relpath: "kernel/lsb_defconfig",
                 build_target: "Image",
                 output_relpath: "arch/arm64/boot/Image",
             }
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(
             layout,
             KernelBuildLayout {
-                defconfig_relpath: "kernel/shuru_x86_64_defconfig",
+                defconfig_relpath: "kernel/lsb_x86_64_defconfig",
                 build_target: "bzImage",
                 output_relpath: "arch/x86/boot/bzImage",
             }

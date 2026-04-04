@@ -14,33 +14,33 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 
 export const projectRoot = join(testDir, '..')
 export const entrypointPath = join(projectRoot, 'index.js')
-export const defaultRuntimeDataDir = join(process.env.HOME ?? '/tmp', '.local', 'share', 'shuru')
+export const defaultRuntimeDataDir = join(process.env.HOME ?? '/tmp', '.local', 'share', 'lsb')
 
 const localBindingCandidatesByPlatform: Partial<
   Record<NodeJS.Platform, Partial<Record<string, string[]>>>
 > = {
   darwin: {
-    x64: ['shuru-nodejs.darwin-universal.node', 'shuru-nodejs.darwin-x64.node'],
-    arm64: ['shuru-nodejs.darwin-universal.node', 'shuru-nodejs.darwin-arm64.node'],
+    x64: ['lsb-nodejs.darwin-universal.node', 'lsb-nodejs.darwin-x64.node'],
+    arm64: ['lsb-nodejs.darwin-universal.node', 'lsb-nodejs.darwin-arm64.node'],
   },
   linux: {
-    x64: ['shuru-nodejs.linux-x64-musl.node', 'shuru-nodejs.linux-x64-gnu.node'],
-    arm64: ['shuru-nodejs.linux-arm64-musl.node', 'shuru-nodejs.linux-arm64-gnu.node'],
-    arm: ['shuru-nodejs.linux-arm-gnueabihf.node'],
-    riscv64: ['shuru-nodejs.linux-riscv64-gnu.node'],
-    ppc64: ['shuru-nodejs.linux-ppc64-gnu.node'],
-    s390x: ['shuru-nodejs.linux-s390x-gnu.node'],
+    x64: ['lsb-nodejs.linux-x64-musl.node', 'lsb-nodejs.linux-x64-gnu.node'],
+    arm64: ['lsb-nodejs.linux-arm64-musl.node', 'lsb-nodejs.linux-arm64-gnu.node'],
+    arm: ['lsb-nodejs.linux-arm-gnueabihf.node'],
+    riscv64: ['lsb-nodejs.linux-riscv64-gnu.node'],
+    ppc64: ['lsb-nodejs.linux-ppc64-gnu.node'],
+    s390x: ['lsb-nodejs.linux-s390x-gnu.node'],
   },
   win32: {
-    x64: ['shuru-nodejs.win32-x64-msvc.node'],
-    ia32: ['shuru-nodejs.win32-ia32-msvc.node'],
-    arm64: ['shuru-nodejs.win32-arm64-msvc.node'],
+    x64: ['lsb-nodejs.win32-x64-msvc.node'],
+    ia32: ['lsb-nodejs.win32-ia32-msvc.node'],
+    arm64: ['lsb-nodejs.win32-arm64-msvc.node'],
   },
 }
 
 export function getBuiltNativeArtifacts() {
   return readdirSync(projectRoot)
-    .filter((entry) => entry.startsWith('shuru-nodejs.') && entry.endsWith('.node'))
+    .filter((entry) => entry.startsWith('lsb-nodejs.') && entry.endsWith('.node'))
     .sort()
 }
 
@@ -54,7 +54,7 @@ export function canLoadBuiltEntrypoint() {
 }
 
 export function resolveRuntimeDataDir() {
-  return process.env.SHURU_NODEJS_TEST_DATA_DIR || defaultRuntimeDataDir
+  return process.env.LSB_NODEJS_TEST_DATA_DIR || defaultRuntimeDataDir
 }
 
 export function hasRuntimeAssets(dataDir: string) {
@@ -62,7 +62,7 @@ export function hasRuntimeAssets(dataDir: string) {
 }
 
 export function resolveNodeBinaryForEntitlementCheck() {
-  return process.env.SHURU_NODEJS_TEST_NODE_BINARY || process.execPath
+  return process.env.LSB_NODEJS_TEST_NODE_BINARY || process.execPath
 }
 
 export function hasVirtualizationEntitlement() {
@@ -85,7 +85,7 @@ export function isSupportedRuntimePlatform() {
 }
 
 export function makeGuestPath(label: string) {
-  return `/tmp/shuru-nodejs-${label}-${process.pid}-${Date.now()}`
+  return `/tmp/lsb-nodejs-${label}-${process.pid}-${Date.now()}`
 }
 
 export function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean } = {}) {
@@ -105,7 +105,7 @@ export function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean }
 
     return {
       ok: false as const,
-      message: `${qualifier} in ${dataDir}; run "shuru init" or set SHURU_NODEJS_TEST_DATA_DIR to enable these VM tests`,
+      message: `${qualifier} in ${dataDir}; run "lsb init" or set LSB_NODEJS_TEST_DATA_DIR to enable these VM tests`,
     }
   }
 
@@ -113,7 +113,7 @@ export function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean }
     const nodeBinary = resolveNodeBinaryForEntitlementCheck()
     return {
       ok: false as const,
-      message: `node executable at ${nodeBinary} does not have com.apple.security.virtualization; codesign it with shuru.entitlements to enable these VM tests`,
+      message: `node executable at ${nodeBinary} does not have com.apple.security.virtualization; codesign it with lsb.entitlements to enable these VM tests`,
     }
   }
 

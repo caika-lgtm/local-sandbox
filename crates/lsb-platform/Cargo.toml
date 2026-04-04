@@ -1,0 +1,34 @@
+[package]
+name = "lsb-platform"
+version = "0.0.1"
+edition = "2021"
+description = "Platform abstraction and metadata for lsb"
+license = "Apache-2.0"
+repository = "https://github.com/Gnosnay/local-sandbox"
+
+[dependencies]
+anyhow = "1"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+dispatch2 = "0.3"
+libc = "0.2"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSURL",
+    "NSArray",
+    "NSError",
+    "NSFileHandle",
+    "NSKeyValueObserving",
+    "NSDictionary",
+    "NSObject",
+    "NSObjCRuntime",
+] }
+objc2-virtualization = { version = "0.3", features = [
+    "dispatch2",
+    "VZFileHandleNetworkDeviceAttachment",
+    "VZNetworkBlockDeviceStorageDeviceAttachment",
+] }
