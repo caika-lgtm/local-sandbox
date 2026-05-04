@@ -1541,6 +1541,7 @@ fn parse_mount(host_path: String, guest_path: String) -> anyhow::Result<MountCon
   Ok(MountConfig {
     host_path,
     guest_path,
+    read_only: false,
   })
 }
 
