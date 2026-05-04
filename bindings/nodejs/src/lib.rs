@@ -7,33 +7,33 @@ use napi::bindgen_prelude::{Buffer, Either, Function, Result, Uint8Array, Unknow
 use napi::{Error, Status};
 use napi_derive::napi;
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use anyhow::{bail, Context};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use napi::threadsafe_function::{
-  ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
-};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use lsb_sdk::{
   DirEntry as NativeDirEntry, MountConfig, PortMapping, SandboxConfig,
   SecretConfig as NativeSecretConfig, StatResponse as NativeStatResponse,
 };
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use lsb_vm::PortForwardHandle;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
+use napi::threadsafe_function::{
+  ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+};
+#[cfg(lsb_nodejs_supported)]
 use tokio::sync::{oneshot, watch};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use uuid::Uuid;
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use std::io::BufReader;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use std::net::TcpStream;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use std::sync::{Arc, Mutex};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 use std::time::Duration;
 
 #[allow(non_snake_case)]
@@ -137,12 +137,12 @@ pub struct FileChangeEvent {
   pub event: String,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 type BufferThreadsafeFunction =
   ThreadsafeFunction<Vec<u8>, Unknown<'static>, Buffer, Status, false>;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 type ExitThreadsafeFunction = ThreadsafeFunction<i32, Unknown<'static>, i32, Status, false>;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 enum VmCommand {
   Exec {
     argv: Vec<String>,
@@ -211,14 +211,14 @@ enum VmCommand {
   },
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 struct RuntimeSandbox {
   cmd_tx: std::sync::mpsc::Sender<VmCommand>,
   instance_dir: String,
   stopped: AtomicBool,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 impl RuntimeSandbox {
   async fn boot(config: SandboxConfig, instanceID: Option<String>) -> anyhow::Result<Self> {
     let (ready_tx, ready_rx) = oneshot::channel::<anyhow::Result<String>>();
@@ -431,7 +431,7 @@ impl RuntimeSandbox {
   }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 impl Drop for RuntimeSandbox {
   fn drop(&mut self) {
     if !self.stopped.swap(true, Ordering::SeqCst) {
@@ -442,13 +442,13 @@ impl Drop for RuntimeSandbox {
   }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 enum ProcessInput {
   Stdin(Vec<u8>),
   Kill,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 #[derive(Default)]
 struct ProcessEventState {
   stdout_listeners: Vec<BufferThreadsafeFunction>,
@@ -459,7 +459,7 @@ struct ProcessEventState {
   exit_code: Option<i32>,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 struct SpawnedProcessState {
   pid: String,
   input_tx: std::sync::mpsc::Sender<ProcessInput>,
@@ -467,7 +467,7 @@ struct SpawnedProcessState {
   exited_rx: watch::Receiver<Option<i32>>,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 impl SpawnedProcessState {
   fn register_stdout_listener(
     &self,
@@ -581,13 +581,13 @@ impl SpawnedProcessState {
 
 #[napi]
 pub struct Sandbox {
-  #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+  #[cfg(lsb_nodejs_supported)]
   inner: Arc<RuntimeSandbox>,
 }
 
 #[napi]
 pub struct SpawnedProcess {
-  #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+  #[cfg(lsb_nodejs_supported)]
   state: Arc<SpawnedProcessState>,
 }
 
@@ -599,7 +599,7 @@ impl SpawnedProcess {
     event: String,
     callback: Function<'static, Unknown<'static>, Unknown<'static>>,
   ) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       match event.as_str() {
         "stdout" => self.state.register_stdout_listener(callback),
@@ -612,7 +612,7 @@ impl SpawnedProcess {
       }
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = event;
       let _ = callback;
@@ -622,7 +622,7 @@ impl SpawnedProcess {
 
   #[napi]
   pub fn write(&self, data: Either<String, Uint8Array>) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let bytes = match data {
         Either::A(text) => text.into_bytes(),
@@ -635,7 +635,7 @@ impl SpawnedProcess {
         .map_err(|_| Error::new(Status::GenericFailure, "process is no longer writable"))
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = data;
       Err(unsupported_platform_error())
@@ -644,7 +644,7 @@ impl SpawnedProcess {
 
   #[napi]
   pub async fn kill(&self) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self
         .state
@@ -653,7 +653,7 @@ impl SpawnedProcess {
         .map_err(|_| Error::new(Status::GenericFailure, "process is no longer running"))
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       Err(unsupported_platform_error())
     }
@@ -661,12 +661,12 @@ impl SpawnedProcess {
 
   #[napi(getter)]
   pub fn pid(&self) -> Result<String> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       Ok(self.state.pid.clone())
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       Err(unsupported_platform_error())
     }
@@ -674,7 +674,7 @@ impl SpawnedProcess {
 
   #[napi(getter)]
   pub async fn exited(&self) -> Result<i32> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let mut rx = self.state.exited_rx.clone();
       if let Some(code) = *rx.borrow() {
@@ -695,7 +695,7 @@ impl SpawnedProcess {
       }
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       Err(unsupported_platform_error())
     }
@@ -706,17 +706,19 @@ impl SpawnedProcess {
 impl Sandbox {
   #[napi(factory)]
   pub async fn start(opts: Option<StartOptions>) -> Result<Self> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let instanceID = opts.as_ref().and_then(|value| value.instanceID.clone());
       let config = build_sandbox_config(opts.unwrap_or_default()).map_err(to_napi_error)?;
-      let inner = RuntimeSandbox::boot(config, instanceID).await.map_err(to_napi_error)?;
+      let inner = RuntimeSandbox::boot(config, instanceID)
+        .await
+        .map_err(to_napi_error)?;
       return Ok(Self {
         inner: Arc::new(inner),
       });
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = opts;
       Err(unsupported_platform_error())
@@ -729,7 +731,7 @@ impl Sandbox {
     command: Either<String, Vec<String>>,
     opts: Option<ExecOptions>,
   ) -> Result<ExecResult> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let shell = opts
         .and_then(|options| options.shell)
@@ -744,7 +746,7 @@ impl Sandbox {
       return Ok(map_exec_result(result));
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = command;
       let _ = opts;
@@ -754,7 +756,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn exec_shell(&self, command: String) -> Result<ExecResult> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let result = self
         .inner
@@ -764,7 +766,7 @@ impl Sandbox {
       return Ok(map_exec_result(result));
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = command;
       Err(unsupported_platform_error())
@@ -777,7 +779,7 @@ impl Sandbox {
     command: Either<String, Vec<String>>,
     opts: Option<SpawnOptions>,
   ) -> Result<SpawnedProcess> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let opts = opts.unwrap_or(SpawnOptions {
         cwd: None,
@@ -814,7 +816,7 @@ impl Sandbox {
       return Ok(SpawnedProcess { state });
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = command;
       let _ = opts;
@@ -829,7 +831,7 @@ impl Sandbox {
     callback: Function<'static, FileChangeEvent, Unknown<'static>>,
     opts: Option<WatchOptions>,
   ) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let tsfn = callback
         .build_threadsafe_function::<FileChangeEvent>()
@@ -866,7 +868,7 @@ impl Sandbox {
       Ok(())
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       let _ = callback;
@@ -877,13 +879,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn read_file(&self, path: String) -> Result<Buffer> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let content = self.inner.read_file(path).await.map_err(to_napi_error)?;
       return Ok(Buffer::from(content));
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       Err(unsupported_platform_error())
@@ -892,7 +894,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn write_file(&self, path: String, content: Either<String, Uint8Array>) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let content = match content {
         Either::A(text) => text.into_bytes(),
@@ -906,7 +908,7 @@ impl Sandbox {
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       let _ = content;
@@ -916,7 +918,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn mkdir(&self, path: String, opts: Option<MkdirOptions>) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self
         .inner
@@ -926,7 +928,7 @@ impl Sandbox {
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       let _ = opts;
@@ -936,13 +938,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn read_dir(&self, path: String) -> Result<Vec<DirEntry>> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let response = self.inner.read_dir(path).await.map_err(to_napi_error)?;
       return Ok(response.entries.into_iter().map(map_dir_entry).collect());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       Err(unsupported_platform_error())
@@ -951,13 +953,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn stat(&self, path: String) -> Result<StatResult> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       let stat = self.inner.stat(path).await.map_err(to_napi_error)?;
       return Ok(map_stat_result(stat));
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       Err(unsupported_platform_error())
@@ -966,7 +968,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn remove(&self, path: String, opts: Option<RemoveOptions>) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self
         .inner
@@ -979,7 +981,7 @@ impl Sandbox {
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       let _ = opts;
@@ -989,7 +991,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn rename(&self, old_path: String, new_path: String) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self
         .inner
@@ -999,7 +1001,7 @@ impl Sandbox {
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = old_path;
       let _ = new_path;
@@ -1009,7 +1011,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn copy(&self, src: String, dst: String, opts: Option<CopyOptions>) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self
         .inner
@@ -1023,7 +1025,7 @@ impl Sandbox {
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = src;
       let _ = dst;
@@ -1034,13 +1036,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn chmod(&self, path: String, mode: u32) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self.inner.chmod(path, mode).await.map_err(to_napi_error)?;
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       let _ = mode;
@@ -1050,7 +1052,7 @@ impl Sandbox {
 
   #[napi]
   pub async fn exists(&self, path: String) -> Result<bool> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       return match self.inner.stat(path).await {
         Ok(_) => Ok(true),
@@ -1059,7 +1061,7 @@ impl Sandbox {
       };
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = path;
       Err(unsupported_platform_error())
@@ -1068,13 +1070,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn checkpoint(&self, name: String) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self.inner.checkpoint(name).await.map_err(to_napi_error)?;
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       let _ = name;
       Err(unsupported_platform_error())
@@ -1083,13 +1085,13 @@ impl Sandbox {
 
   #[napi]
   pub async fn stop(&self) -> Result<()> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       self.inner.stop().await.map_err(to_napi_error)?;
       return Ok(());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       Err(unsupported_platform_error())
     }
@@ -1097,12 +1099,12 @@ impl Sandbox {
 
   #[napi(getter)]
   pub fn instance_dir(&self) -> Result<String> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(lsb_nodejs_supported)]
     {
       return Ok(self.inner.instance_dir().to_string());
     }
 
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(lsb_nodejs_supported))]
     {
       Err(unsupported_platform_error())
     }
@@ -1128,15 +1130,15 @@ impl Default for StartOptions {
   }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 static PROCESS_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 extern "C" {
   fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32) -> libc::c_int;
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn clone_file_cow(src: &str, dst: &str) -> anyhow::Result<()> {
   let c_src = std::ffi::CString::new(src).context("invalid source path")?;
   let c_dst = std::ffi::CString::new(dst).context("invalid destination path")?;
@@ -1150,7 +1152,7 @@ fn clone_file_cow(src: &str, dst: &str) -> anyhow::Result<()> {
   Ok(())
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn clone_file_cow_atomic(src: &str, dst: &str) -> anyhow::Result<()> {
   let temp_path = format!("{dst}.tmp-{}", Uuid::new_v4());
 
@@ -1168,7 +1170,7 @@ fn clone_file_cow_atomic(src: &str, dst: &str) -> anyhow::Result<()> {
   Ok(())
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn boot_vm(
   config: SandboxConfig,
   instanceID: Option<String>,
@@ -1285,7 +1287,7 @@ fn boot_vm(
   Ok((sandbox, instance_dir, proxy_handle, fwd_handle))
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn run_vm_loop(
   sandbox: lsb_vm::Sandbox,
   instance_dir: &str,
@@ -1390,7 +1392,7 @@ fn run_vm_loop(
   let _ = sandbox.stop();
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn exec_command(
   sandbox: &lsb_vm::Sandbox,
   argv: &[String],
@@ -1408,7 +1410,7 @@ fn exec_command(
   })
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn spawn_process_threads(
   stream: TcpStream,
   state: Arc<SpawnedProcessState>,
@@ -1436,8 +1438,7 @@ fn spawn_process_threads(
         while !closed_for_input.load(Ordering::SeqCst) {
           match input_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(ProcessInput::Stdin(data)) => {
-              if lsb_proto::frame::write_frame(&mut writer, lsb_proto::frame::STDIN, &data)
-                .is_err()
+              if lsb_proto::frame::write_frame(&mut writer, lsb_proto::frame::STDIN, &data).is_err()
               {
                 break;
               }
@@ -1481,7 +1482,7 @@ fn spawn_process_threads(
     });
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn build_sandbox_config(opts: StartOptions) -> anyhow::Result<SandboxConfig> {
   let mut config = SandboxConfig::default();
 
@@ -1526,7 +1527,7 @@ fn build_sandbox_config(opts: StartOptions) -> anyhow::Result<SandboxConfig> {
   Ok(config)
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn parse_mount(host_path: String, guest_path: String) -> anyhow::Result<MountConfig> {
   if !guest_path.starts_with('/') {
     bail!("guest path must be absolute (start with /): '{guest_path}'");
@@ -1543,7 +1544,7 @@ fn parse_mount(host_path: String, guest_path: String) -> anyhow::Result<MountCon
   })
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn parse_port_mapping(input: &str) -> anyhow::Result<PortMapping> {
   let parts = input.split(':').collect::<Vec<_>>();
   if parts.len() != 2 {
@@ -1563,7 +1564,7 @@ fn parse_port_mapping(input: &str) -> anyhow::Result<PortMapping> {
   })
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn parse_secret(secret: SecretConfig) -> anyhow::Result<NativeSecretConfig> {
   if secret.value.trim().is_empty() {
     bail!("secret value must be non-empty");
@@ -1579,7 +1580,7 @@ fn parse_secret(secret: SecretConfig) -> anyhow::Result<NativeSecretConfig> {
   })
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn map_exec_result(result: lsb_sdk::ExecResult) -> ExecResult {
   ExecResult {
     stdout: result.stdout,
@@ -1588,7 +1589,7 @@ fn map_exec_result(result: lsb_sdk::ExecResult) -> ExecResult {
   }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn map_dir_entry(entry: NativeDirEntry) -> DirEntry {
   DirEntry {
     name: entry.name,
@@ -1597,7 +1598,7 @@ fn map_dir_entry(entry: NativeDirEntry) -> DirEntry {
   }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(lsb_nodejs_supported)]
 fn map_stat_result(stat: NativeStatResponse) -> StatResult {
   StatResult {
     size: stat.size as f64,
@@ -1609,11 +1610,11 @@ fn map_stat_result(stat: NativeStatResponse) -> StatResult {
   }
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(not(lsb_nodejs_supported))]
 fn unsupported_platform_error() -> Error {
   Error::new(
     Status::GenericFailure,
-    "lsb native bindings currently support only macOS on Apple Silicon (aarch64). This package may install elsewhere, but Sandbox.start() is unsupported there.".to_string(),
+    "lsb native bindings currently support only macOS on x86_64 and Apple Silicon (arm64). This package may install elsewhere, but Sandbox.start() is unsupported there.".to_string(),
   )
 }
 

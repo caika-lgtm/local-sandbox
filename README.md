@@ -12,7 +12,7 @@ lsb boots lightweight Linux VMs using Apple's Virtualization.framework. Each san
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Gnosnay/local-sandbox/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/LocalSandBox/local-sandbox/main/install.sh | sh
 ```
 
 Or build from source:
@@ -142,14 +142,14 @@ The `network.allow` list restricts which hosts the guest can reach. Omit it to a
 
 ## Node.js Binding
 
-Use lsb programmatically from Node.js or TypeScript with the [`@superhq/lsb-nodejs`](https://www.npmjs.com/package/@superhq/lsb-nodejs) package.
+Use lsb programmatically from Node.js or TypeScript with the [`@local-sandbox/lsb-nodejs`](https://www.npmjs.com/package/@local-sandbox/lsb-nodejs) package.
 
 ```sh
-npm install @superhq/lsb-nodejs
+npm install @local-sandbox/lsb-nodejs
 ```
 
 ```ts
-import { Sandbox } from "@superhq/lsb-nodejs";
+import { Sandbox } from "@local-sandbox/lsb-nodejs";
 
 const sb = await Sandbox.start({ from: "python-env" });
 
@@ -167,7 +167,7 @@ lsb ships as an [agent skill](https://agentskills.io) so AI agents (Claude Code,
 
 ```sh
 # Install via Vercel's skills CLI
-npx skills add Gnosnay/local-sandbox
+npx skills add LocalSandBox/local-sandbox
 
 # Or manually copy into your project
 cp -r skills/lsb .claude/skills/lsb
@@ -186,4 +186,4 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes and breaking changes.
 
 ## Bugs
 
-File issues at [github.com/Gnosnay/local-sandbox/issues](https://github.com/Gnosnay/local-sandbox/issues).
+File issues at [github.com/LocalSandBox/local-sandbox/issues](https://github.com/LocalSandBox/local-sandbox/issues).

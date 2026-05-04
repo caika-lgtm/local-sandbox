@@ -1,6 +1,6 @@
 # Changelog
 
-> Historical note: JavaScript and TypeScript support now ships from [`bindings/nodejs`](bindings/nodejs) as `@superhq/lsb-nodejs`. Older `@superhq/lsb` entries below describe archived SDK releases.
+> Historical note: JavaScript and TypeScript support now ships from [`bindings/nodejs`](bindings/nodejs) as `@local-sandbox/lsb-nodejs`. Older `@superhq/lsb` entries below describe archived SDK releases.
 
 ## 0.4.1
 

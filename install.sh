@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="Gnosnay/local-sandbox"
+REPO="LocalSandBox/local-sandbox"
 INSTALL_DIR="$HOME/.local/bin"
 
 ##### Platform checks

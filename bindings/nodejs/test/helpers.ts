@@ -81,7 +81,7 @@ export function loadBuiltEntrypoint(): NodejsBinding {
 }
 
 export function isSupportedRuntimePlatform() {
-  return process.platform === 'darwin' && process.arch === 'arm64'
+  return process.platform === 'darwin' && (process.arch === 'arm64' || process.arch === 'x64')
 }
 
 export function makeGuestPath(label: string) {
@@ -93,7 +93,7 @@ export function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean }
     return {
       ok: false as const,
       message:
-        'positive VM tests require macOS on Apple Silicon; non-darwin/arm64 coverage is limited to load and validation checks',
+        'positive VM tests require macOS on x64 or Apple Silicon; non-darwin coverage is limited to load and validation checks',
     }
   }
 

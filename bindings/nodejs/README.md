@@ -1,6 +1,6 @@
-# `@superhq/lsb-nodejs`
+# `@local-sandbox/lsb-nodejs`
 
-Native Node.js bindings for [lsb](https://github.com/Gnosnay/local-sandbox), built with
+Native Node.js bindings for [lsb](https://github.com/LocalSandBox/local-sandbox.git), built with
 [`napi-rs`](https://napi.rs/).
 
 This package is the canonical JavaScript and TypeScript entrypoint for lsb. It wraps the
@@ -9,8 +9,12 @@ Rust [`lsb-sdk`](../../crates/lsb-sdk) directly and exposes a Node-facing `Sandb
 ## Install
 
 ```sh
-npm install @superhq/lsb-nodejs
+npm install @local-sandbox/lsb-nodejs
 ```
+
+The published npm package is split into a root package plus a platform package. On supported hosts,
+`npm` resolves and installs either `@local-sandbox/lsb-nodejs-darwin-arm64` or
+`@local-sandbox/lsb-nodejs-darwin-x64` automatically.
 
 For local development, use Corepack to run the Yarn version pinned in
 [`package.json`](./package.json):
@@ -22,11 +26,11 @@ corepack yarn install
 ## Requirements
 
 - Node.js 18+
-- macOS 14+ on Apple Silicon
-- [lsb CLI](https://github.com/Gnosnay/local-sandbox) installed
+- macOS 14+ on Apple Silicon or Intel x86_64
+- [lsb CLI](https://github.com/LocalSandBox/local-sandbox.git) installed
 - `Sandbox.start()` expects the lsb runtime data directory to already exist. In the default
   location, `~/.local/share/lsb/Image` must be present before booting a sandbox. This VM image
-  is not bundled with `@superhq/lsb-nodejs` and needs to be downloaded manually as part of your
+  is not bundled with `@local-sandbox/lsb-nodejs` and needs to be downloaded manually as part of your
   lsb runtime setup.
 - On macOS, the `node` executable loading this SDK must be code signed with the
   `com.apple.security.virtualization` entitlement. For a project-local workflow, sign a copied
@@ -38,7 +42,7 @@ corepack yarn install
 ### Start a sandbox and run commands
 
 ```ts
-import { Sandbox } from '@superhq/lsb-nodejs'
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const dataDir = `${process.env.HOME}/.local/share/lsb`
 const sandbox = await Sandbox.start({
@@ -64,7 +68,7 @@ await sandbox.stop()
 ### Pass argv directly or run through a shell
 
 ```ts
-import { Sandbox } from '@superhq/lsb-nodejs'
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const sandbox = await Sandbox.start()
 
@@ -80,7 +84,7 @@ await sandbox.stop()
 ### Inspect the guest filesystem
 
 ```ts
-import { Sandbox } from '@superhq/lsb-nodejs'
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const sandbox = await Sandbox.start()
 
@@ -99,7 +103,7 @@ await sandbox.stop()
 ### Save and resume from a checkpoint
 
 ```ts
-import { Sandbox } from '@superhq/lsb-nodejs'
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const base = await Sandbox.start()
 await base.exec('mkdir -p /workspace && echo ready > /workspace/state.txt')
@@ -115,7 +119,7 @@ await resumed.stop()
 ### Configure mounts, ports, secrets, and network policy
 
 ```ts
-import { Sandbox } from '@superhq/lsb-nodejs'
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const sandbox = await Sandbox.start({
   cpus: 4,
@@ -182,5 +186,8 @@ virtualization after signing the local Node copy, the command will surface that 
 
 ## Platform Notes
 
-- Supported target: macOS on Apple Silicon (`aarch64-apple-darwin`).
-- Other platforms and architectures are not supported by this binding at runtime.
+- Supported targets: macOS on Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`).
+- Installation is limited to supported macOS architectures. Unsupported platforms should fail during
+  `npm install` instead of installing a package that only errors at runtime.
+- The published native binaries live in the platform packages
+  `@local-sandbox/lsb-nodejs-darwin-arm64` and `@local-sandbox/lsb-nodejs-darwin-x64`.

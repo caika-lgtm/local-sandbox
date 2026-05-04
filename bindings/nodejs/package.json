@@ -1,13 +1,20 @@
 {
-  "name": "@superhq/lsb-nodejs",
+  "name": "@local-sandbox/lsb-nodejs",
   "version": "0.1.0",
   "description": "Native Node.js bindings for lsb microVM sandboxes",
   "main": "index.js",
   "types": "index.d.ts",
   "license": "Apache-2.0",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gnosnay/local-sandbox.git",
+    "url": "https://github.com/LocalSandBox/local-sandbox.git",
     "directory": "bindings/nodejs"
   },
   "keywords": [
@@ -19,14 +26,16 @@
   ],
   "files": [
     "README.md",
+    "LICENSE",
     "index.d.ts",
     "index.js"
   ],
   "napi": {
     "binaryName": "lsb-nodejs",
-    "packageName": "@superhq/lsb-nodejs",
+    "packageName": "@local-sandbox/lsb-nodejs",
     "targets": [
-      "aarch64-apple-darwin"
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
     ]
   },
   "engines": {
@@ -45,7 +54,7 @@
     "format:rs": "cargo fmt",
     "format:toml": "taplo format",
     "lint": "oxlint .",
-    "prepublishOnly": "napi prepublish -t npm",
+    "prepublishOnly": "napi prepublish -t npm --no-gh-release",
     "test": "napi build --platform && ava",
     "test:signed-node": "./scripts/test-with-signed-node.sh",
     "version": "napi version"

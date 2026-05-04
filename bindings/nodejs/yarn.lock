@@ -282,6 +282,22 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@local-sandbox/lsb-nodejs@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "@local-sandbox/lsb-nodejs@workspace:."
+  dependencies:
+    "@napi-rs/cli": "npm:^3.2.0"
+    "@oxc-node/core": "npm:^0.0.35"
+    "@taplo/cli": "npm:^0.7.0"
+    "@types/node": "npm:^22.15.30"
+    ava: "npm:^7.0.0"
+    npm-run-all2: "npm:^8.0.4"
+    oxlint: "npm:^1.14.0"
+    prettier: "npm:^3.6.2"
+    typescript: "npm:^5.9.2"
+  languageName: unknown
+  linkType: soft
+
 "@mapbox/node-pre-gyp@npm:^2.0.0":
   version: 2.0.0
   resolution: "@mapbox/node-pre-gyp@npm:2.0.0"
@@ -1300,22 +1316,6 @@ __metadata:
   checksum: 10c0/482ee543629aa1933b332f811a1ae805a213681ecdd98c042b1c1b89387df63e7812248bb4df3910b02b3cc5589d3d73e4393f30e197c9dde18046ccd471fc6b
   languageName: node
   linkType: hard
-
-"@superhq/lsb-nodejs@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "@superhq/lsb-nodejs@workspace:."
-  dependencies:
-    "@napi-rs/cli": "npm:^3.2.0"
-    "@oxc-node/core": "npm:^0.0.35"
-    "@taplo/cli": "npm:^0.7.0"
-    "@types/node": "npm:^22.15.30"
-    ava: "npm:^7.0.0"
-    npm-run-all2: "npm:^8.0.4"
-    oxlint: "npm:^1.14.0"
-    prettier: "npm:^3.6.2"
-    typescript: "npm:^5.9.2"
-  languageName: unknown
-  linkType: soft
 
 "@taplo/cli@npm:^0.7.0":
   version: 0.7.0

@@ -125,4 +125,5 @@ index.d.ts
 .signed-node/
 .pnp.*
 .yarn/
-/npm
+/npm/**/*.node
+/npm/**/*.tgz

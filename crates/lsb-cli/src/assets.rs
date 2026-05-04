@@ -8,7 +8,7 @@ use serde::Deserialize;
 use lsb_platform::{asset_paths, supported_runtime_platform};
 use tar::Archive;
 
-const GITHUB_REPO: &str = "Gnosnay/local-sandbox";
+const GITHUB_REPO: &str = "LocalSandBox/local-sandbox";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Check if OS image assets exist and match the expected version.

@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 description = "Platform abstraction and metadata for lsb"
 license = "Apache-2.0"
-repository = "https://github.com/Gnosnay/local-sandbox"
+repository = "https://github.com/LocalSandBox/local-sandbox.git"
 
 [dependencies]
 anyhow = "1"

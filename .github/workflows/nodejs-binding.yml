@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/nodejs-binding.yml"
+      - ".github/workflows/release_nodejs.yml"
       - "bindings/nodejs/**"
       - "crates/lsb-sdk/**"
       - "crates/lsb-vm/**"
@@ -14,12 +15,17 @@ on:
   pull_request:
     paths:
       - ".github/workflows/nodejs-binding.yml"
+      - ".github/workflows/release_nodejs.yml"
       - "bindings/nodejs/**"
       - "crates/lsb-sdk/**"
       - "crates/lsb-vm/**"
       - "crates/lsb-proto/**"
       - "crates/lsb-proxy/**"
       - "crates/lsb-platform/**"
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+  COREPACK_INTEGRITY_KEYS: 0
 
 jobs:
   lint:
@@ -52,6 +58,8 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
     defaults:
       run:
         working-directory: bindings/nodejs
@@ -68,9 +76,12 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cmake --version
       - run: yarn install --immutable
-      - run: yarn napi build --target ${{ matrix.target }} --release
+      - run: yarn napi build --target ${{ matrix.target }} --platform --release --js index.js --dts index.d.ts
       - uses: actions/upload-artifact@v4
         with:
           name: bindings-nodejs-${{ matrix.target }}
-          path: bindings/nodejs/lsb-nodejs.*.node
+          path: |
+            bindings/nodejs/lsb-nodejs.*.node
+            bindings/nodejs/index.js
+            bindings/nodejs/index.d.ts
           if-no-files-found: error

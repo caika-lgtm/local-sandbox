@@ -87,7 +87,7 @@ function loadBuiltEntrypoint(): NodejsBinding {
 }
 
 function isSupportedRuntimePlatform() {
-  return process.platform === 'darwin' && process.arch === 'arm64'
+  return process.platform === 'darwin' && (process.arch === 'arm64' || process.arch === 'x64')
 }
 
 function makeGuestPath(label: string) {
@@ -99,7 +99,7 @@ function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean } = {}) 
     return {
       ok: false as const,
       message:
-        'positive VM tests require macOS on Apple Silicon; non-darwin/arm64 coverage is limited to load and validation checks',
+        'positive VM tests require macOS on x64 or Apple Silicon; non-darwin coverage is limited to load and validation checks',
     }
   }
 
@@ -236,7 +236,7 @@ test('unsupported platforms fail with a clear unsupported error', async (t) => {
   }
 
   const error = await t.throwsAsync(() => Sandbox.start())
-  t.regex(error?.message ?? '', /only macOS on Apple Silicon|darwin\/arm64/i)
+  t.regex(error?.message ?? '', /only macOS on x86_64 and Apple Silicon|darwin\/(arm64|x64)/i)
 })
 
 test('supported builds validate startup inputs through the Rust SDK path', async (t) => {
