@@ -4,8 +4,8 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
-use serde::Deserialize;
 use lsb_platform::{asset_paths, supported_runtime_platform};
+use serde::Deserialize;
 use tar::Archive;
 
 const GITHUB_REPO: &str = "LocalSandBox/local-sandbox";
@@ -225,11 +225,7 @@ impl<R: Read> Read for ProgressReader<R> {
             let mut stderr = io::stderr().lock();
             if let Some(total) = self.total_bytes {
                 let total_mb = total / (1024 * 1024);
-                let _ = write!(
-                    stderr,
-                    "\rlsb: downloaded {} / {} MB",
-                    current_mb, total_mb
-                );
+                let _ = write!(stderr, "\rlsb: downloaded {} / {} MB", current_mb, total_mb);
             } else {
                 let _ = write!(stderr, "\rlsb: downloaded {} MB", current_mb);
             }

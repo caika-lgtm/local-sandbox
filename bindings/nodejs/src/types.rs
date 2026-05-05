@@ -1,0 +1,234 @@
+use std::collections::HashMap;
+
+use napi_derive::napi;
+
+// These structs define the JavaScript-facing data shapes. Field names stay in
+// camelCase to match the generated TypeScript API and user input objects.
+/// Secret value that is only exposed to requests for the listed hosts.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct SecretConfig {
+  /// Secret payload or source value.
+  pub value: String,
+  /// Host allowlist for this secret.
+  pub hosts: Vec<String>,
+}
+
+/// Host port made reachable from inside the guest via host.lsb.internal.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct ExposeHostConfig {
+  /// Port on the host machine.
+  pub host: u32,
+  /// Port visible to the guest. Defaults to `host` when omitted.
+  pub guest: Option<u32>,
+}
+
+/// Network policy for a sandbox.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct NetworkConfig {
+  /// Outbound host patterns allowed by the proxy.
+  pub allow: Option<Vec<String>>,
+  /// Host ports exposed to the guest.
+  pub exposeHost: Option<Vec<ExposeHostConfig>>,
+  /// Secrets injected by the proxy for allowed hosts.
+  pub secrets: Option<HashMap<String, SecretConfig>>,
+}
+
+/// Host-to-guest TCP port forwarding rule.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct PortMappingConfig {
+  /// Host port to listen on.
+  pub host: u32,
+  /// Guest port to forward to.
+  pub guest: u32,
+}
+
+/// Directory mount configuration.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct MountConfig {
+  // napi-rs still deserializes this as String at runtime; the ts_type keeps the
+  // generated declaration as a discriminated union for TypeScript callers.
+  /// Mount behavior: `overlay` isolates writes, `direct` applies libc mount flags.
+  #[napi(ts_type = "'overlay' | 'direct'")]
+  pub r#type: String,
+  /// Existing host directory to share with the VM.
+  pub hostPath: String,
+  /// Absolute guest path where the directory appears.
+  pub guestPath: String,
+  /// libc mount flags for direct mounts. Use `0` for read-write, `1` for MS_RDONLY.
+  pub flags: Option<f64>,
+}
+
+/// Options used when booting a sandbox.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct StartOptions {
+  /// Stable instance directory name.
+  pub instanceId: Option<String>,
+  /// Checkpoint name to resume from.
+  pub from: Option<String>,
+  /// Number of virtual CPUs.
+  pub cpus: Option<u32>,
+  /// Guest memory in MiB.
+  pub memoryMb: Option<u32>,
+  /// Writable root disk size in MiB.
+  pub diskSizeMb: Option<u32>,
+  /// Runtime data directory containing VM assets and instances.
+  pub dataDir: Option<String>,
+  /// Host-to-guest port forwards.
+  pub ports: Option<Vec<PortMappingConfig>>,
+  /// Directory mounts applied during boot.
+  #[napi(
+    ts_type = "Array<{ type: 'overlay'; hostPath: string; guestPath: string } | { type: 'direct'; hostPath: string; guestPath: string; flags: number }>"
+  )]
+  pub mounts: Option<Vec<MountConfig>>,
+  /// Network proxy, host exposure, and secret policy.
+  pub network: Option<NetworkConfig>,
+}
+
+/// Per-command execution options.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct ExecOptions {
+  /// Guest working directory.
+  pub cwd: Option<String>,
+  /// Additional environment variables.
+  pub env: Option<HashMap<String, String>>,
+  /// Shell used when the command is a string. Defaults to `sh`.
+  pub shell: Option<String>,
+}
+
+/// Options for spawned processes.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct SpawnOptions {
+  /// Guest working directory.
+  pub cwd: Option<String>,
+  /// Additional environment variables.
+  pub env: Option<HashMap<String, String>>,
+  /// Shell used when the command is a string. Defaults to `sh`.
+  pub shell: Option<String>,
+}
+
+/// Options for file watching.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct WatchOptions {
+  /// Watch subdirectories recursively. Defaults to true.
+  pub recursive: Option<bool>,
+}
+
+/// Options for directory creation.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct MkdirOptions {
+  /// Create parent directories as needed. Defaults to true.
+  pub recursive: Option<bool>,
+}
+
+/// Options for removing files or directories.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct RemoveOptions {
+  /// Remove directory trees recursively. Defaults to false.
+  pub recursive: Option<bool>,
+}
+
+/// Options for copying files or directories.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct CopyOptions {
+  /// Copy directory trees recursively. Defaults to false.
+  pub recursive: Option<bool>,
+}
+
+/// Completed command result.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct ExecResult {
+  /// Captured stdout as UTF-8 text.
+  pub stdout: String,
+  /// Captured stderr as UTF-8 text.
+  pub stderr: String,
+  /// Process exit code.
+  pub exitCode: i32,
+}
+
+/// Directory entry returned by `readDir`.
+#[napi(object)]
+pub struct DirEntry {
+  /// Entry basename.
+  pub name: String,
+  /// Entry type such as `file`, `dir`, or `symlink`.
+  pub r#type: String,
+  /// Entry size in bytes.
+  pub size: f64,
+}
+
+/// File metadata returned by `stat`.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct StatResult {
+  /// Size in bytes.
+  pub size: f64,
+  /// POSIX mode bits.
+  pub mode: u32,
+  /// Modified time as a Unix timestamp in milliseconds.
+  pub mtime: f64,
+  /// True when the path is a directory.
+  pub isDir: bool,
+  /// True when the path is a regular file.
+  pub isFile: bool,
+  /// True when the path is a symbolic link.
+  pub isSymlink: bool,
+}
+
+/// File watcher event.
+#[allow(non_snake_case)]
+#[napi(object)]
+pub struct FileChangeEvent {
+  /// Changed guest path.
+  pub path: String,
+  /// Event kind reported by the guest watcher.
+  pub event: String,
+}
+
+impl Default for StartOptions {
+  fn default() -> Self {
+    Self {
+      instanceId: None,
+      from: None,
+      cpus: None,
+      memoryMb: None,
+      diskSizeMb: None,
+      dataDir: None,
+      ports: None,
+      mounts: None,
+      network: None,
+    }
+  }
+}
+
+impl Default for ExecOptions {
+  fn default() -> Self {
+    Self {
+      cwd: None,
+      env: None,
+      shell: None,
+    }
+  }
+}
+
+impl Default for SpawnOptions {
+  fn default() -> Self {
+    Self {
+      cwd: None,
+      env: None,
+      shell: None,
+    }
+  }
+}

@@ -4,6 +4,21 @@ import { createSharedRuntimeHarness, makeGuestPath, waitFor } from './helpers'
 
 const runtime = createSharedRuntimeHarness()
 
+async function collectByteChunks(stream: AsyncIterable<Uint8Array>, chunks: string[]) {
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk).toString('utf8'))
+  }
+}
+
+async function collectWatchEvents(
+  stream: AsyncIterable<{ path: string; event: string }>,
+  events: Array<{ path: string; event: string }>,
+) {
+  for await (const event of stream) {
+    events.push(event)
+  }
+}
+
 test.serial.before(async () => {
   await runtime.before()
 })
@@ -28,17 +43,12 @@ test.serial(
       'sleep 0.2; echo chunk1; sleep 0.05; echo warn >&2; sleep 0.05; echo chunk2; sleep 0.05; echo chunk3',
     )
 
-    proc.on('stdout', (data) => {
-      stdoutChunks.push(data.toString())
-    })
-    proc.on('stderr', (data) => {
-      stderrChunks.push(data.toString())
-    })
-    proc.on('exit', (code) => {
-      exitCodes.push(code)
-    })
-
+    const stdoutTask = collectByteChunks(proc.stdout, stdoutChunks)
+    const stderrTask = collectByteChunks(proc.stderr, stderrChunks)
     const code = await proc.exited
+    exitCodes.push(code)
+    await Promise.all([stdoutTask, stderrTask])
+
     t.is(code, 0)
     t.deepEqual(exitCodes, [0])
     t.true(stdoutChunks.join('').includes('chunk1'))
@@ -52,7 +62,7 @@ test.serial(
 )
 
 test.serial(
-  'supported runtime spawn supports cwd, stdin writes, kill, and unique pids',
+  'supported runtime spawn supports cwd, stdin writes, kill, and concurrent processes',
   async (t) => {
     const sandbox = runtime.use(t)
     if (!sandbox) {
@@ -62,27 +72,30 @@ test.serial(
 
     const cwdProc = await sandbox.spawn('sleep 0.2; pwd', { cwd: '/tmp' })
     const cwdChunks: string[] = []
-    cwdProc.on('stdout', (data) => {
-      cwdChunks.push(data.toString())
-    })
+    const cwdStdoutTask = collectByteChunks(cwdProc.stdout, cwdChunks)
     t.is(await cwdProc.exited, 0)
+    await cwdStdoutTask
     t.is(cwdChunks.join('').trim(), '/tmp')
 
-    const echoProc = await sandbox.spawn(['sh', '-lc', 'sleep 0.2; cat'])
+    const echoProc = await sandbox.spawn(['sh', '-lc', 'cat'])
     const echoed: string[] = []
-    echoProc.on('stdout', (data) => {
-      echoed.push(data.toString())
-    })
+    const echoStdoutTask = collectByteChunks(echoProc.stdout, echoed)
     await new Promise((resolve) => setTimeout(resolve, 300))
     echoProc.write('hello from stdin\n')
     await waitFor(() => echoed.join('').includes('hello from stdin'))
     await echoProc.kill()
     t.not(await echoProc.exited, 0)
+    await echoStdoutTask
 
     const proc1 = await sandbox.spawn('sleep 0.2; echo one')
     const proc2 = await sandbox.spawn('sleep 0.2; echo two')
-    t.not(proc1.pid, proc2.pid)
-    await Promise.all([proc1.exited, proc2.exited])
+    const proc1Stdout: string[] = []
+    const proc2Stdout: string[] = []
+    const proc1StdoutTask = collectByteChunks(proc1.stdout, proc1Stdout)
+    const proc2StdoutTask = collectByteChunks(proc2.stdout, proc2Stdout)
+    await Promise.all([proc1.exited, proc2.exited, proc1StdoutTask, proc2StdoutTask])
+    t.is(proc1Stdout.join('').trim(), 'one')
+    t.is(proc2Stdout.join('').trim(), 'two')
   },
 )
 
@@ -99,8 +112,9 @@ test.serial(
     const events: Array<{ path: string; event: string }> = []
 
     await sandbox.exec(`mkdir -p ${watchRoot}/sub`)
-    await sandbox.watch(watchRoot, (event) => {
-      events.push(event)
+    let watchError: unknown = null
+    void collectWatchEvents(await sandbox.watch(watchRoot), events).catch((error) => {
+      watchError = error
     })
     await new Promise((resolve) => setTimeout(resolve, 300))
 
@@ -112,10 +126,9 @@ test.serial(
     const concurrent = await sandbox.spawn(
       `sleep 0.2; echo started; touch ${watchRoot}/spawn-created.txt; echo done`,
     )
-    concurrent.on('stdout', (data) => {
-      concurrentStdout.push(data.toString())
-    })
+    const concurrentStdoutTask = collectByteChunks(concurrent.stdout, concurrentStdout)
     t.is(await concurrent.exited, 0)
+    await concurrentStdoutTask
 
     await waitFor(() => {
       const eventKinds = new Set(events.map((event) => event.event))
@@ -128,6 +141,7 @@ test.serial(
         events.some((event) => event.path.includes('/spawn-created.txt'))
       )
     })
+    t.is(watchError, null)
 
     t.true(concurrentStdout.join('').includes('started'))
     t.true(concurrentStdout.join('').includes('done'))

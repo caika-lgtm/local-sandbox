@@ -77,13 +77,12 @@ pub(crate) fn list() -> Result<()> {
             .to_string();
         let meta = entry.metadata()?;
         let disk_usage = if is_cas {
-            lsb_store::ChunkIndex::load(path.to_str().unwrap_or(""))
-                .map(|idx| {
-                    let non_zero = (0..idx.num_chunks())
-                        .filter(|&i| idx.get_hash(i).map(|h| h != "ZERO").unwrap_or(false))
-                        .count();
-                    (non_zero as u64) * 64 * 1024
-                })?
+            lsb_store::ChunkIndex::load(path.to_str().unwrap_or("")).map(|idx| {
+                let non_zero = (0..idx.num_chunks())
+                    .filter(|&i| idx.get_hash(i).map(|h| h != "ZERO").unwrap_or(false))
+                    .count();
+                (non_zero as u64) * 64 * 1024
+            })?
         } else {
             meta.blocks() * 512
         };

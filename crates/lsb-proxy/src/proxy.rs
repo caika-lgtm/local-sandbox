@@ -43,9 +43,7 @@ impl ProxyEngine {
         // BoringSSL upstream connector — Chrome's TLS stack so Cloudflare
         // doesn't reject our MITM connections based on JA3/JA4 fingerprint.
         let mut builder = SslConnector::builder(SslMethod::tls()).expect("SslConnector");
-        builder
-            .set_alpn_protos(b"\x08http/1.1")
-            .expect("ALPN");
+        builder.set_alpn_protos(b"\x08http/1.1").expect("ALPN");
         let upstream_ssl = builder.build();
 
         ProxyEngine {
@@ -130,7 +128,11 @@ async fn handle_connection(
 ) -> anyhow::Result<()> {
     if let std::net::IpAddr::V4(ipv4) = dst.ip() {
         if let Some(host_port) = config.exposed_host_port(ipv4, dst.port()) {
-            debug!("expose-host: guest :{} -> localhost:{}", dst.port(), host_port);
+            debug!(
+                "expose-host: guest :{} -> localhost:{}",
+                dst.port(),
+                host_port
+            );
             let local_dst = SocketAddr::new(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
                 host_port,
@@ -278,13 +280,9 @@ async fn handle_mitm(
 
     // Upstream: BoringSSL — Chrome's TLS fingerprint passes Cloudflare
     let upstream_tcp = TcpStream::connect(dst).await?;
-    let upstream_tls = tokio_boring::connect(
-        upstream_ssl.configure()?,
-        &domain,
-        upstream_tcp,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("BoringSSL connect to {domain}: {e}"))?;
+    let upstream_tls = tokio_boring::connect(upstream_ssl.configure()?, &domain, upstream_tcp)
+        .await
+        .map_err(|e| anyhow::anyhow!("BoringSSL connect to {domain}: {e}"))?;
 
     let (mut guest_rd, mut guest_wr) = tokio::io::split(guest_tls);
     let (mut upstream_rd, mut upstream_wr) = tokio::io::split(upstream_tls);

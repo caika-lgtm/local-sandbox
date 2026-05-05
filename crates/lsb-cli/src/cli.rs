@@ -30,7 +30,7 @@ pub(crate) struct VmArgs {
     #[arg(long)]
     pub allow_net: bool,
 
-    /// Allow mounts to write to host filesystem (required for :rw mounts)
+    /// Allow direct mounts to write to host filesystem (required for :rw mounts)
     #[arg(long)]
     pub allow_host_writes: bool,
 
@@ -38,7 +38,7 @@ pub(crate) struct VmArgs {
     #[arg(short = 'p', long = "port", value_name = "HOST:GUEST")]
     pub port: Vec<String>,
 
-    /// Mount a host directory into the VM (HOST:GUEST[:ro|:rw], default ro)
+    /// Mount a host directory into the VM (HOST:GUEST[:ro|:rw], default overlay)
     #[arg(long = "mount", value_name = "HOST:GUEST[:ro|:rw]")]
     pub mount: Vec<String>,
 

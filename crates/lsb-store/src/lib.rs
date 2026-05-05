@@ -116,8 +116,9 @@ pub fn start_cas_nbd_server(
             .and_then(|path| FlatFileBackend::open(path).ok());
         (idx, fallback, Some(index_path.to_string()))
     } else {
-        let fallback = FlatFileBackend::open(rootfs_path)
-            .with_context(|| format!("failed to open rootfs for lazy ingestion: {}", rootfs_path))?;
+        let fallback = FlatFileBackend::open(rootfs_path).with_context(|| {
+            format!("failed to open rootfs for lazy ingestion: {}", rootfs_path)
+        })?;
         let disk_size = fallback.size();
         info!("CAS: lazy mode, {} MB rootfs", disk_size / (1024 * 1024));
         (ChunkIndex::new(disk_size), Some(fallback), None)

@@ -7,12 +7,12 @@ compile_error!(
 
 mod sandbox;
 
-pub use sandbox::{MountConfig, PortForwardHandle, Sandbox, VmConfigBuilder};
 pub use lsb_platform::VmState;
 pub use lsb_proto::{
     frame, ExecRequest, ForwardRequest, ForwardResponse, MountRequest, MountResponse, PortMapping,
     ReadFileRequest, WriteFileRequest, WriteFileResponse, VSOCK_PORT, VSOCK_PORT_FORWARD,
 };
+pub use sandbox::{MountConfig, PortForwardHandle, Sandbox, VmConfigBuilder};
 
 /// Reject checkpoint names that could escape the checkpoints directory.
 pub fn validate_checkpoint_name(name: &str) -> Result<(), String> {

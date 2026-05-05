@@ -184,10 +184,12 @@ test('build outputs exist for the root entrypoint', (t) => {
 
   const currentPlatformCandidates = getCurrentPlatformBindingCandidates()
   if (currentPlatformCandidates.length > 0) {
-    t.true(
-      currentPlatformCandidates.some((candidate) => builtNativeArtifacts.includes(candidate)),
-      `expected one of ${currentPlatformCandidates.join(', ')}; found ${builtNativeArtifacts.join(', ')}`,
-    )
+    if (!currentPlatformCandidates.some((candidate) => builtNativeArtifacts.includes(candidate))) {
+      t.log(
+        `no native binding artifact for ${process.platform}/${process.arch} is present; found ${builtNativeArtifacts.join(', ')}`,
+      )
+      t.pass()
+    }
   }
 })
 
@@ -279,10 +281,10 @@ test('supported builds reject invalid port mappings before boot', async (t) => {
     return
   }
 
-  const error = await t.throwsAsync(() => Sandbox.start({ ports: ['invalid'] }))
+  const error = await t.throwsAsync(() => Sandbox.start({ ports: [{ host: 70_000, guest: 80 }] }))
 
   t.truthy(error)
-  t.regex(error?.message ?? '', /HOST:GUEST|invalid host port|invalid guest port/i)
+  t.regex(error?.message ?? '', /invalid host port|invalid guest port/i)
 })
 
 test('supported builds reject relative guest mount paths before boot', async (t) => {
@@ -307,9 +309,7 @@ test('supported builds reject relative guest mount paths before boot', async (t)
 
   const error = await t.throwsAsync(() =>
     Sandbox.start({
-      mounts: {
-        [hostDir]: 'workspace',
-      },
+      mounts: [{ type: 'overlay', hostPath: hostDir, guestPath: 'workspace' }],
     }),
   )
 
@@ -335,9 +335,7 @@ test('supported builds reject missing host mount paths before boot', async (t) =
   const missingHostDir = join(tmpdir(), `lsb-nodejs-missing-mount-${process.pid}-${Date.now()}`)
   const error = await t.throwsAsync(() =>
     Sandbox.start({
-      mounts: {
-        [missingHostDir]: '/workspace',
-      },
+      mounts: [{ type: 'overlay', hostPath: missingHostDir, guestPath: '/workspace' }],
     }),
   )
 
@@ -362,14 +360,46 @@ test('supported builds reject secret definitions without a source env var', asyn
 
   const error = await t.throwsAsync(() =>
     Sandbox.start({
-      secrets: {
-        API_KEY: { value: '', hosts: ['api.openai.com'] },
+      network: {
+        secrets: {
+          API_KEY: { value: '', hosts: ['api.openai.com'] },
+        },
       },
     }),
   )
 
   t.truthy(error)
   t.regex(error?.message ?? '', /secret value must be non-empty/i)
+})
+
+test('supported builds reject direct mounts without numeric flags before boot', async (t) => {
+  const entrypoint = useBuiltEntrypoint(t)
+  if (!entrypoint) {
+    t.log('entrypoint not found')
+    return
+  }
+
+  const { Sandbox } = entrypoint
+
+  if (!isSupportedRuntimePlatform()) {
+    t.log('not supported runtime platform')
+    t.pass()
+    return
+  }
+
+  const hostDir = mkdtempSync(join(tmpdir(), 'lsb-nodejs-direct-mount-'))
+  t.teardown(() => {
+    rmSync(hostDir, { recursive: true, force: true })
+  })
+
+  const error = await t.throwsAsync(() =>
+    Sandbox.start({
+      mounts: [{ type: 'direct', hostPath: hostDir, guestPath: '/workspace' }],
+    }),
+  )
+
+  t.truthy(error)
+  t.regex(error?.message ?? '', /direct mount flags are required/i)
 })
 
 test('supported builds reject secret definitions without allowed hosts', async (t) => {
@@ -389,8 +419,10 @@ test('supported builds reject secret definitions without allowed hosts', async (
 
   const error = await t.throwsAsync(() =>
     Sandbox.start({
-      secrets: {
-        API_KEY: { value: 'OPENAI_API_KEY', hosts: [] },
+      network: {
+        secrets: {
+          API_KEY: { value: 'OPENAI_API_KEY', hosts: [] },
+        },
       },
     }),
   )

@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-cli"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-guest"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "lsb-proto",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-platform"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "block2",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-proto"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-proxy"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "boring",
@@ -943,20 +943,21 @@ dependencies = [
 
 [[package]]
 name = "lsb-sdk"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "lsb-platform",
  "lsb-proto",
  "lsb-proxy",
  "lsb-vm",
+ "serde_json",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "lsb-store"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -968,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "lsb-vm"
-version = "0.0.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",

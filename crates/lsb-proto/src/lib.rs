@@ -52,19 +52,23 @@ pub struct ForwardResponse {
 
 /// Sent by the host over vsock to instruct the guest to mount a virtiofs device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MountRequest {
-    pub tag: String,
-    pub guest_path: String,
-    /// When true (default), guest mounts via overlay (writes go to tmpfs).
-    /// When false, guest mounts VirtioFS directly (writes go to host).
-    #[serde(default = "default_true")]
-    pub read_only: bool,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MountRequest {
+    /// Mount a VirtioFS source as the lower layer of a tmpfs-backed overlay.
+    Overlay { source: String, target: String },
+    /// Mount a VirtioFS source directly with libc mount flags.
+    Direct {
+        source: String,
+        target: String,
+        flags: u64,
+    },
 }
 
 /// Sent by the guest in response to a MountRequest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MountResponse {
-    pub tag: String,
+    pub source: String,
+    pub target: String,
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -193,22 +197,39 @@ mod tests {
     use super::MountRequest;
 
     #[test]
-    fn mount_request_defaults_to_read_only() {
-        let json = r#"{"tag":"mount0","guest_path":"/workspace"}"#;
+    fn mount_request_round_trips_overlay() {
+        let json = r#"{"type":"overlay","source":"mount0","target":"/workspace"}"#;
         let req: MountRequest = serde_json::from_str(json).expect("mount request should parse");
-        assert!(req.read_only);
+        match req {
+            MountRequest::Overlay { source, target } => {
+                assert_eq!(source, "mount0");
+                assert_eq!(target, "/workspace");
+            }
+            MountRequest::Direct { .. } => panic!("expected overlay request"),
+        }
     }
 
     #[test]
-    fn mount_request_round_trips_rw() {
-        let req = MountRequest {
-            tag: "mount0".into(),
-            guest_path: "/workspace".into(),
-            read_only: false,
+    fn mount_request_round_trips_direct_flags() {
+        let req = MountRequest::Direct {
+            source: "mount1".into(),
+            target: "/workspace".into(),
+            flags: 1,
         };
         let json = serde_json::to_string(&req).expect("mount request should serialize");
         let req2: MountRequest =
             serde_json::from_str(&json).expect("mount request should deserialize");
-        assert!(!req2.read_only);
+        match req2 {
+            MountRequest::Direct {
+                source,
+                target,
+                flags,
+            } => {
+                assert_eq!(source, "mount1");
+                assert_eq!(target, "/workspace");
+                assert_eq!(flags, 1);
+            }
+            MountRequest::Overlay { .. } => panic!("expected direct request"),
+        }
     }
 }

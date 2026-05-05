@@ -35,7 +35,11 @@ impl ChunkStore for LocalChunkStore {
         let hash = blake3::hash(data);
         let hex = hash.to_hex().to_string();
         let path = self.chunk_path(&hex);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut f) => f
                 .write_all(data)
                 .with_context(|| format!("failed to write chunk {}", hex))?,
@@ -120,7 +124,8 @@ impl ChunkIndex {
     }
 
     pub fn load(path: &str) -> Result<Self> {
-        let mut f = fs::File::open(path).with_context(|| format!("failed to open index: {}", path))?;
+        let mut f =
+            fs::File::open(path).with_context(|| format!("failed to open index: {}", path))?;
 
         let mut buf8 = [0u8; 8];
         f.read_exact(&mut buf8)?;
@@ -373,7 +378,10 @@ impl CasBackend {
                 tracing::warn!("chunk {} not found in store, returning zeros", hash);
                 Ok(vec![0u8; CHUNK_SIZE])
             }
-            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())),
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )),
         }
     }
 }

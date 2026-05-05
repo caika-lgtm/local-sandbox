@@ -44,9 +44,7 @@ test('supported builds reject mount host paths that do not exist before boot', a
 
   const error = await t.throwsAsync(() =>
     Sandbox.start({
-      mounts: {
-        [missingHostPath]: '/workspace',
-      },
+      mounts: [{ type: 'overlay', hostPath: missingHostPath, guestPath: '/workspace' }],
     }),
   )
 

@@ -70,40 +70,48 @@ mod guest {
     }
 
     fn process_mount(req: &MountRequest) -> MountResponse {
-        if let Err(e) = std::fs::create_dir_all(&req.guest_path) {
+        let (source, target) = match req {
+            MountRequest::Overlay { source, target } => (source.as_str(), target.as_str()),
+            MountRequest::Direct { source, target, .. } => (source.as_str(), target.as_str()),
+        };
+
+        if let Err(e) = std::fs::create_dir_all(target) {
             return MountResponse {
-                tag: req.tag.clone(),
+                source: source.to_string(),
+                target: target.to_string(),
                 ok: false,
-                error: Some(format!(
-                    "failed to create mount point {}: {}",
-                    req.guest_path, e
-                )),
+                error: Some(format!("failed to create mount point {}: {}", target, e)),
             };
         }
 
-        let result = if req.read_only {
-            mount_overlay(&req.tag, &req.guest_path)
-        } else {
-            mount_direct(&req.tag, &req.guest_path)
+        let result = match req {
+            MountRequest::Overlay { source, target } => mount_overlay(source, target),
+            MountRequest::Direct {
+                source,
+                target,
+                flags,
+            } => mount_direct(source, target, *flags),
         };
 
         match result {
             Ok(()) => MountResponse {
-                tag: req.tag.clone(),
+                source: source.to_string(),
+                target: target.to_string(),
                 ok: true,
                 error: None,
             },
             Err(msg) => MountResponse {
-                tag: req.tag.clone(),
+                source: source.to_string(),
+                target: target.to_string(),
                 ok: false,
                 error: Some(msg),
             },
         }
     }
 
-    fn mount_overlay(tag: &str, guest_path: &str) -> Result<(), String> {
-        let virtiofs_dir = format!("/mnt/.virtiofs/{}", tag);
-        let overlay_dir = format!("/mnt/.overlay/{}", tag);
+    fn mount_overlay(source: &str, target: &str) -> Result<(), String> {
+        let virtiofs_dir = format!("/mnt/.virtiofs/{}", source);
+        let overlay_dir = format!("/mnt/.overlay/{}", source);
         let upper_dir = format!("{}/upper", overlay_dir);
         let work_dir = format!("{}/work", overlay_dir);
 
@@ -112,12 +120,12 @@ mod guest {
             .and_then(|_| std::fs::create_dir_all(&work_dir))
             .map_err(|e| format!("failed to create staging dirs: {}", e))?;
 
-        if !mount_fs(tag, &virtiofs_dir, "virtiofs", None) {
-            return Err(format!("failed to mount virtiofs device '{}'", tag));
+        if !mount_fs(source, &virtiofs_dir, "virtiofs", None) {
+            return Err(format!("failed to mount virtiofs device '{}'", source));
         }
 
         if !mount_fs("tmpfs", &overlay_dir, "tmpfs", None) {
-            return Err(format!("failed to mount tmpfs for overlay on '{}'", tag));
+            return Err(format!("failed to mount tmpfs for overlay on '{}'", source));
         }
 
         // Re-create upper/work after tmpfs mount
@@ -129,23 +137,30 @@ mod guest {
             "lowerdir={},upperdir={},workdir={}",
             virtiofs_dir, upper_dir, work_dir
         );
-        if !mount_fs("overlay", guest_path, "overlay", Some(&overlay_opts)) {
-            return Err(format!("failed to mount overlay at {}", guest_path));
+        if !mount_fs("overlay", target, "overlay", Some(&overlay_opts)) {
+            return Err(format!("failed to mount overlay at {}", target));
         }
 
-        eprintln!("lsb-guest: mounted {} -> {} (overlay)", tag, guest_path);
+        eprintln!("lsb-guest: mounted {} -> {} (overlay)", source, target);
         Ok(())
     }
 
-    fn mount_direct(tag: &str, guest_path: &str) -> Result<(), String> {
-        if !mount_fs(tag, guest_path, "virtiofs", None) {
+    fn mount_direct(source: &str, target: &str, flags: u64) -> Result<(), String> {
+        let mount_flags: libc::c_ulong = flags
+            .try_into()
+            .map_err(|_| format!("mount flags out of range: {}", flags))?;
+
+        if !mount_fs_with_flags(source, target, "virtiofs", mount_flags, None) {
             return Err(format!(
                 "failed to mount virtiofs device '{}' at {}",
-                tag, guest_path
+                source, target
             ));
         }
 
-        eprintln!("lsb-guest: mounted {} -> {} (direct rw)", tag, guest_path);
+        eprintln!(
+            "lsb-guest: mounted {} -> {} (direct flags={})",
+            source, target, flags
+        );
         Ok(())
     }
 

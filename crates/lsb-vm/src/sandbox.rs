@@ -19,11 +19,19 @@ use lsb_proto::{
 
 // --- Mount types ---
 
+const MS_RDONLY: u64 = 1;
+
 #[derive(Debug, Clone)]
-pub struct MountConfig {
-    pub host_path: String,
-    pub guest_path: String,
-    pub read_only: bool,
+pub enum MountConfig {
+    Overlay {
+        host_path: String,
+        guest_path: String,
+    },
+    Direct {
+        host_path: String,
+        guest_path: String,
+        flags: u64,
+    },
 }
 
 // --- VmConfigBuilder ---
@@ -119,22 +127,7 @@ impl VmConfigBuilder {
         let rootfs_path = self.rootfs.context("rootfs path is required")?;
 
         let memory_bytes = self.memory_mb * 1024 * 1024;
-        let mut mount_requests: Vec<MountRequest> = Vec::new();
-        let mut shared_dirs = Vec::new();
-
-        for (i, m) in self.mounts.iter().enumerate() {
-            let tag = format!("mount{}", i);
-            shared_dirs.push(PlatformSharedDir {
-                host_path: m.host_path.clone(),
-                tag: tag.clone(),
-                read_only: m.read_only,
-            });
-            mount_requests.push(MountRequest {
-                tag,
-                guest_path: m.guest_path.clone(),
-                read_only: m.read_only,
-            });
-        }
+        let (shared_dirs, mount_requests) = build_mount_plan(&self.mounts);
 
         Ok(Sandbox {
             vm: lsb_platform::create_vm(PlatformVmConfig {
@@ -159,6 +152,49 @@ impl VmConfigBuilder {
 pub struct Sandbox {
     vm: Arc<dyn PlatformVm>,
     mounts: Mutex<Vec<MountRequest>>,
+}
+
+fn build_mount_plan(mounts: &[MountConfig]) -> (Vec<PlatformSharedDir>, Vec<MountRequest>) {
+    let mut mount_requests = Vec::new();
+    let mut shared_dirs = Vec::new();
+
+    for (i, mount) in mounts.iter().enumerate() {
+        let tag = format!("mount{}", i);
+        match mount {
+            MountConfig::Overlay {
+                host_path,
+                guest_path,
+            } => {
+                shared_dirs.push(PlatformSharedDir {
+                    host_path: host_path.clone(),
+                    tag: tag.clone(),
+                    read_only: true,
+                });
+                mount_requests.push(MountRequest::Overlay {
+                    source: tag,
+                    target: guest_path.clone(),
+                });
+            }
+            MountConfig::Direct {
+                host_path,
+                guest_path,
+                flags,
+            } => {
+                shared_dirs.push(PlatformSharedDir {
+                    host_path: host_path.clone(),
+                    tag: tag.clone(),
+                    read_only: flags & MS_RDONLY != 0,
+                });
+                mount_requests.push(MountRequest::Direct {
+                    source: tag,
+                    target: guest_path.clone(),
+                    flags: *flags,
+                });
+            }
+        }
+    }
+
+    (shared_dirs, mount_requests)
 }
 
 impl Sandbox {
@@ -197,10 +233,14 @@ impl Sandbox {
                 }
             };
             if !resp.ok {
+                let (source, target) = match req {
+                    MountRequest::Overlay { source, target } => (source, target),
+                    MountRequest::Direct { source, target, .. } => (source, target),
+                };
                 bail!(
                     "mount failed: {} -> {}: {}",
-                    req.tag,
-                    req.guest_path,
+                    source,
+                    target,
                     resp.error.unwrap_or_else(|| "unknown error".into())
                 );
             }
@@ -810,4 +850,79 @@ fn relay(a: TcpStream, b: TcpStream) {
     });
     let _ = t1.join();
     let _ = t2.join();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_mount_generates_readonly_shared_dir_and_overlay_request() {
+        let mounts = vec![MountConfig::Overlay {
+            host_path: "/host".into(),
+            guest_path: "/workspace".into(),
+        }];
+
+        let (shared_dirs, mount_requests) = build_mount_plan(&mounts);
+
+        assert_eq!(shared_dirs.len(), 1);
+        assert_eq!(shared_dirs[0].host_path, "/host");
+        assert_eq!(shared_dirs[0].tag, "mount0");
+        assert!(shared_dirs[0].read_only);
+
+        match &mount_requests[0] {
+            MountRequest::Overlay { source, target } => {
+                assert_eq!(source, "mount0");
+                assert_eq!(target, "/workspace");
+            }
+            MountRequest::Direct { .. } => panic!("expected overlay request"),
+        }
+    }
+
+    #[test]
+    fn direct_mount_preserves_flags_and_derives_platform_readonly() {
+        let mounts = vec![
+            MountConfig::Direct {
+                host_path: "/rw".into(),
+                guest_path: "/rw".into(),
+                flags: 0,
+            },
+            MountConfig::Direct {
+                host_path: "/ro".into(),
+                guest_path: "/ro".into(),
+                flags: MS_RDONLY,
+            },
+        ];
+
+        let (shared_dirs, mount_requests) = build_mount_plan(&mounts);
+
+        assert!(!shared_dirs[0].read_only);
+        assert!(shared_dirs[1].read_only);
+
+        match &mount_requests[0] {
+            MountRequest::Direct {
+                source,
+                target,
+                flags,
+            } => {
+                assert_eq!(source, "mount0");
+                assert_eq!(target, "/rw");
+                assert_eq!(*flags, 0);
+            }
+            MountRequest::Overlay { .. } => panic!("expected direct request"),
+        }
+
+        match &mount_requests[1] {
+            MountRequest::Direct {
+                source,
+                target,
+                flags,
+            } => {
+                assert_eq!(source, "mount1");
+                assert_eq!(target, "/ro");
+                assert_eq!(*flags, MS_RDONLY);
+            }
+            MountRequest::Overlay { .. } => panic!("expected direct request"),
+        }
+    }
 }

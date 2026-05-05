@@ -48,11 +48,9 @@ const dataDir = `${process.env.HOME}/.local/share/lsb`
 const sandbox = await Sandbox.start({
   dataDir,
   cpus: 2,
-  memory: 2048,
-  allowNet: true,
-  mounts: {
-    './src': '/workspace',
-  },
+  memoryMb: 2048,
+  mounts: [{ type: 'overlay', hostPath: './src', guestPath: '/workspace' }],
+  network: { allow: ['registry.npmjs.org'] },
 })
 
 const result = await sandbox.exec('echo hello from lsb')
@@ -123,15 +121,17 @@ import { Sandbox } from '@local-sandbox/lsb-nodejs'
 
 const sandbox = await Sandbox.start({
   cpus: 4,
-  memory: 4096,
-  diskSize: 8192,
-  allowNet: true,
-  ports: ['8080:80'],
-  mounts: { './src': '/workspace' },
-  secrets: {
-    API_KEY: { value: 'sk-test', hosts: ['api.openai.com'] },
+  memoryMb: 4096,
+  diskSizeMb: 8192,
+  ports: [{ host: 8080, guest: 80 }],
+  mounts: [{ type: 'direct', hostPath: './src', guestPath: '/workspace', flags: 0 }],
+  network: {
+    allow: ['api.openai.com', 'registry.npmjs.org'],
+    exposeHost: [{ host: 3000, guest: 3000 }],
+    secrets: {
+      API_KEY: { value: 'sk-test', hosts: ['api.openai.com'] },
+    },
   },
-  network: { allow: ['api.openai.com', 'registry.npmjs.org'] },
 })
 
 console.log(sandbox.instanceDir)
@@ -141,19 +141,64 @@ await sandbox.stop()
 
 ### Start options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `from` | `string` | Checkpoint name to start from |
-| `cpus` | `number` | Number of vCPUs |
-| `memory` | `number` | Memory in MB |
-| `diskSize` | `number` | Disk size in MB |
-| `dataDir` | `string` | lsb runtime data directory |
-| `allowNet` | `boolean` | Enable network access |
-| `allowedHosts` | `string[]` | Additional allowlisted hosts |
-| `ports` | `string[]` | Port forwards (`"host:guest"`) |
-| `mounts` | `Record<string, string>` | Directory mounts (`{ hostPath: guestPath }`) |
-| `secrets` | `Record<string, SecretConfig>` | Secrets injected via the lsb proxy |
-| `network` | `NetworkConfig` | Network access policy |
+| Option       | Type                                | Description                    |
+| ------------ | ----------------------------------- | ------------------------------ |
+| `instanceId` | `string`                            | Stable instance directory name |
+| `from`       | `string`                            | Checkpoint name to start from  |
+| `cpus`       | `number`                            | Number of vCPUs                |
+| `memoryMb`   | `number`                            | Memory in MB                   |
+| `diskSizeMb` | `number`                            | Disk size in MB                |
+| `dataDir`    | `string`                            | lsb runtime data directory     |
+| `ports`      | `{ host: number; guest: number }[]` | Host-to-guest port forwards    |
+| `mounts`     | `MountConfig[]`                     | Directory mounts               |
+| `network`    | `NetworkConfig`                     | Network access policy          |
+
+`mounts` accepts discriminated entries:
+
+| Type      | Shape                                                                    | Behavior                                      |
+| --------- | ------------------------------------------------------------------------ | --------------------------------------------- |
+| `overlay` | `{ type: 'overlay'; hostPath: string; guestPath: string }`               | Host is read-only; guest writes go to overlay |
+| `direct`  | `{ type: 'direct'; hostPath: string; guestPath: string; flags: number }` | Mounts VirtioFS directly with libc flags      |
+
+For direct mounts, `flags: 0` is read-write and `flags: 1` is `MS_RDONLY`.
+
+`network` enables proxy networking when present. It accepts:
+
+| Option       | Type                                 | Description                        |
+| ------------ | ------------------------------------ | ---------------------------------- |
+| `allow`      | `string[]`                           | Allowed outbound host patterns     |
+| `exposeHost` | `{ host: number; guest?: number }[]` | Host ports exposed to the guest    |
+| `secrets`    | `Record<string, SecretConfig>`       | Secrets injected via the lsb proxy |
+
+### Stream process output
+
+```ts
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
+
+const sandbox = await Sandbox.start()
+const proc = await sandbox.spawn('echo out; echo err >&2')
+
+for await (const chunk of proc.stdout) {
+  process.stdout.write(chunk)
+}
+
+console.log(await proc.exited)
+
+await sandbox.stop()
+```
+
+### Watch files
+
+```ts
+import { Sandbox } from '@local-sandbox/lsb-nodejs'
+
+const sandbox = await Sandbox.start()
+const events = await sandbox.watch('/tmp')
+
+for await (const event of events) {
+  console.log(event.path, event.event)
+}
+```
 
 ## Scripts
 

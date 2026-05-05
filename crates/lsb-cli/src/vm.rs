@@ -10,6 +10,8 @@ use crate::assets;
 use crate::cli::VmArgs;
 use crate::config::LsbConfig;
 
+const MS_RDONLY: u64 = 1;
+
 pub(crate) struct PreparedVm {
     pub instance_dir: String,
     pub source_rootfs: String,
@@ -372,23 +374,25 @@ fn parse_mount_parts(host: &str, guest: &str, mode: Option<&str>) -> Result<Moun
     if !guest.starts_with('/') {
         bail!("guest path must be absolute (start with /): '{}'", guest);
     }
-    let read_only = match mode {
-        None | Some("ro") => true,
-        Some("rw") => false,
-        Some(other) => bail!("invalid mount mode '{}': expected 'ro' or 'rw'", other),
-    };
 
-    Ok(MountConfig {
-        host_path: host.to_string(),
-        guest_path: guest.to_string(),
-        read_only,
-    })
+    match mode {
+        None | Some("ro") => Ok(MountConfig::Overlay {
+            host_path: host.to_string(),
+            guest_path: guest.to_string(),
+        }),
+        Some("rw") => Ok(MountConfig::Direct {
+            host_path: host.to_string(),
+            guest_path: guest.to_string(),
+            flags: 0,
+        }),
+        Some(other) => bail!("invalid mount mode '{}': expected 'ro' or 'rw'", other),
+    }
 }
 
 fn validate_mounts(mounts: &[MountConfig], allow_host_writes: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;
-    let cwd = std::fs::canonicalize(&cwd)
-        .context("failed to canonicalize current working directory")?;
+    let cwd =
+        std::fs::canonicalize(&cwd).context("failed to canonicalize current working directory")?;
     validate_mounts_with_cwd(mounts, allow_host_writes, &cwd)
 }
 
@@ -404,7 +408,17 @@ fn validate_mounts_with_cwd(
     }
 
     for mount in mounts {
-        let host = std::path::Path::new(&mount.host_path);
+        let host_path = match mount {
+            MountConfig::Overlay { host_path, .. } | MountConfig::Direct { host_path, .. } => {
+                host_path
+            }
+        };
+        let guest_path = match mount {
+            MountConfig::Overlay { guest_path, .. } | MountConfig::Direct { guest_path, .. } => {
+                guest_path
+            }
+        };
+        let host = std::path::Path::new(host_path);
 
         if host == std::path::Path::new("/") {
             bail!("mounting '/' as a host path is not allowed. Mount a specific subdirectory instead.");
@@ -413,16 +427,18 @@ fn validate_mounts_with_cwd(
         if !host.starts_with(cwd) {
             bail!(
                 "mount host path '{}' is outside the current working directory '{}'. Only paths within CWD can be mounted.",
-                mount.host_path,
+                host_path,
                 cwd.display()
             );
         }
 
-        if !mount.read_only && !allow_host_writes {
+        let writes_to_host =
+            matches!(mount, MountConfig::Direct { flags, .. } if flags & MS_RDONLY == 0);
+        if writes_to_host && !allow_host_writes {
             bail!(
                 "read-write mount '{}:{}:rw' requires --allow-host-writes flag (or \"allow_host_writes\": true in config).",
-                mount.host_path,
-                mount.guest_path
+                host_path,
+                guest_path
             );
         }
     }
@@ -472,16 +488,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mount_defaults_to_read_only() {
-        let mount = parse_mount_parts("/some/host", "/workspace", None).expect("mount should parse");
-        assert!(mount.read_only);
+    fn mount_defaults_to_overlay() {
+        let mount =
+            parse_mount_parts("/some/host", "/workspace", None).expect("mount should parse");
+        assert!(matches!(mount, MountConfig::Overlay { .. }));
     }
 
     #[test]
-    fn mount_rw_suffix_is_supported() {
+    fn mount_rw_suffix_uses_direct_mount() {
         let mount =
             parse_mount_parts("/some/host", "/workspace", Some("rw")).expect("mount should parse");
-        assert!(!mount.read_only);
+        assert!(matches!(mount, MountConfig::Direct { flags: 0, .. }));
     }
 
     #[test]
@@ -497,10 +514,10 @@ mod tests {
     #[test]
     fn rw_mount_requires_allow_flag() {
         let cwd = std::env::current_dir().expect("cwd");
-        let mounts = vec![MountConfig {
+        let mounts = vec![MountConfig::Direct {
             host_path: cwd.to_string_lossy().to_string(),
             guest_path: "/workspace".to_string(),
-            read_only: false,
+            flags: 0,
         }];
         let err = validate_mounts_with_cwd(&mounts, false, &cwd).expect_err("rw mount should fail");
         assert!(err.to_string().contains("--allow-host-writes"));
