@@ -56,7 +56,7 @@ chmod 755 /initramfs/init
 cd /initramfs
 find . | cpio -o -H newc 2>/dev/null | gzip > /output/initramfs.cpio.gz
 "#;
-const MACOS_ROOTFS_DOCKER_SCRIPT: &str = r#"set -e
+const MACOS_ROOTFS_DOCKER_SCRIPT_PREFIX: &str = r#"set -e
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl debootstrap e2fsprogs xz-utils > /dev/null 2>&1
 
@@ -81,31 +81,68 @@ chroot /mnt/rootfs apt-get install -y -qq --no-install-recommends \
     ca-certificates curl git iproute2 \
     openssh-client jq less procps xz-utils libgomp1 libatomic1 > /dev/null 2>&1
 
-case "${DEBOOTSTRAP_ARCH}" in
-    amd64) NODE_ARCH="x64" ;;
-    arm64) NODE_ARCH="arm64" ;;
-    *) echo "unsupported Node.js architecture: ${DEBOOTSTRAP_ARCH}" >&2; exit 1 ;;
-esac
+ROOTFS_DIR="/mnt/rootfs"
+"#;
+const ROOTFS_TOOLCHAIN_INSTALL_SCRIPT: &str = r#"
+TOOLCHAIN_TMP_DIRS=""
 
-echo "==> Installing Node.js ${NODE_VERSION}..."
-NODE_DIST="node-${NODE_VERSION}-linux-${NODE_ARCH}"
-NODE_TARBALL="${NODE_DIST}.tar.xz"
-NODE_URL="https://nodejs.org/dist/${NODE_VERSION}"
-NODE_TMP="$(mktemp -d)"
-curl -fsSLo "${NODE_TMP}/${NODE_TARBALL}" "${NODE_URL}/${NODE_TARBALL}"
-curl -fsSLo "${NODE_TMP}/SHASUMS256.txt" "${NODE_URL}/SHASUMS256.txt"
-checksum_line="$(grep "  ${NODE_TARBALL}$" "${NODE_TMP}/SHASUMS256.txt")"
-(cd "${NODE_TMP}" && printf '%s\n' "${checksum_line}" | sha256sum -c -)
-mkdir -p /mnt/rootfs/usr/local
-tar -xJf "${NODE_TMP}/${NODE_TARBALL}" -C /mnt/rootfs/usr/local --strip-components=1
-for binary in node npm npx corepack; do
-    if [ -e "/mnt/rootfs/usr/local/bin/${binary}" ]; then
-        ln -sf "/usr/local/bin/${binary}" "/mnt/rootfs/usr/bin/${binary}"
+track_toolchain_tmp_dir() {
+    TOOLCHAIN_TMP_DIRS="${TOOLCHAIN_TMP_DIRS} $1"
+}
+
+cleanup_toolchain_tmp_dirs() {
+    if [ -n "${TOOLCHAIN_TMP_DIRS}" ]; then
+        rm -rf ${TOOLCHAIN_TMP_DIRS}
+        TOOLCHAIN_TMP_DIRS=""
     fi
-done
-chroot /mnt/rootfs /usr/bin/node --version | grep -Fx "${NODE_VERSION}" > /dev/null
-chroot /mnt/rootfs /usr/bin/npm --version > /dev/null
-rm -rf "${NODE_TMP}"
+}
+
+install_nodejs() {
+    install_rootfs_dir="$1"
+    case "${DEBOOTSTRAP_ARCH}" in
+        amd64) node_arch="x64" ;;
+        arm64) node_arch="arm64" ;;
+        *) echo "unsupported Node.js architecture: ${DEBOOTSTRAP_ARCH}" >&2; exit 1 ;;
+    esac
+
+    echo "==> Installing Node.js ${NODE_VERSION}..."
+    node_dist="node-${NODE_VERSION}-linux-${node_arch}"
+    node_tarball="${node_dist}.tar.xz"
+    node_url="https://nodejs.org/dist/${NODE_VERSION}"
+    node_tmp="$(mktemp -d)"
+    track_toolchain_tmp_dir "${node_tmp}"
+    curl -fsSLo "${node_tmp}/${node_tarball}" "${node_url}/${node_tarball}"
+    curl -fsSLo "${node_tmp}/SHASUMS256.txt" "${node_url}/SHASUMS256.txt"
+    checksum_line="$(grep "  ${node_tarball}$" "${node_tmp}/SHASUMS256.txt")"
+    (cd "${node_tmp}" && printf '%s\n' "${checksum_line}" | sha256sum -c -)
+    mkdir -p "${install_rootfs_dir}/usr/local"
+    tar -xJf "${node_tmp}/${node_tarball}" -C "${install_rootfs_dir}/usr/local" --strip-components=1
+    for binary in node npm npx corepack; do
+        if [ -e "${install_rootfs_dir}/usr/local/bin/${binary}" ]; then
+            ln -sf "/usr/local/bin/${binary}" "${install_rootfs_dir}/usr/bin/${binary}"
+        fi
+    done
+    chroot "${install_rootfs_dir}" /usr/bin/node --version | grep -Fx "${NODE_VERSION}" > /dev/null
+    chroot "${install_rootfs_dir}" /usr/bin/npm --version > /dev/null
+}
+
+install_google_workspace_cli() {
+    install_rootfs_dir="$1"
+    echo "==> Installing @googleworkspace/cli..."
+    chroot "${install_rootfs_dir}" /usr/bin/npm install -g @googleworkspace/cli
+    chroot "${install_rootfs_dir}" /usr/bin/npm list -g @googleworkspace/cli > /dev/null
+}
+
+install_rootfs_toolchains() {
+    install_rootfs_dir="$1"
+    install_nodejs "${install_rootfs_dir}"
+    install_google_workspace_cli "${install_rootfs_dir}"
+}
+
+install_rootfs_toolchains "${ROOTFS_DIR}"
+cleanup_toolchain_tmp_dirs
+"#;
+const MACOS_ROOTFS_DOCKER_SCRIPT_SUFFIX: &str = r#"
 
 rm -rf /mnt/rootfs/usr/share/doc/* /mnt/rootfs/usr/share/man/* /mnt/rootfs/usr/share/info/*
 find /mnt/rootfs/usr/share/locale -mindepth 1 -maxdepth 1 ! -name "en*" -exec rm -rf {} + 2>/dev/null || true
@@ -123,12 +160,11 @@ echo "nameserver 8.8.8.8" > /mnt/rootfs/etc/resolv.conf
 umount /mnt/rootfs
 echo "==> Debian rootfs populated successfully"
 "#;
-const LINUX_ROOTFS_SCRIPT: &str = r#"set -e
+const LINUX_ROOTFS_SCRIPT_PREFIX: &str = r#"set -e
 mount -o loop "$ROOTFS_IMG" "$MOUNT_DIR"
-NODE_TMP=""
 cleanup() {
-    if [ -n "$NODE_TMP" ]; then
-        rm -rf "$NODE_TMP"
+    if command -v cleanup_toolchain_tmp_dirs > /dev/null 2>&1; then
+        cleanup_toolchain_tmp_dirs
     fi
     umount "$MOUNT_DIR" 2>/dev/null || true
     rmdir "$MOUNT_DIR" 2>/dev/null || true
@@ -153,30 +189,9 @@ chroot "$MOUNT_DIR" apt-get install -y -qq --no-install-recommends \
     openssh-client jq less procps xz-utils libgomp1 libatomic1 \
     ffmpeg > /dev/null 2>&1
 
-case "$DEBOOTSTRAP_ARCH" in
-    amd64) NODE_ARCH="x64" ;;
-    arm64) NODE_ARCH="arm64" ;;
-    *) echo "unsupported Node.js architecture: $DEBOOTSTRAP_ARCH" >&2; exit 1 ;;
-esac
-
-echo "==> Installing Node.js $NODE_VERSION..."
-NODE_DIST="node-${NODE_VERSION}-linux-${NODE_ARCH}"
-NODE_TARBALL="${NODE_DIST}.tar.xz"
-NODE_URL="https://nodejs.org/dist/${NODE_VERSION}"
-NODE_TMP="$(mktemp -d)"
-curl -fsSLo "$NODE_TMP/$NODE_TARBALL" "$NODE_URL/$NODE_TARBALL"
-curl -fsSLo "$NODE_TMP/SHASUMS256.txt" "$NODE_URL/SHASUMS256.txt"
-checksum_line="$(grep "  $NODE_TARBALL$" "$NODE_TMP/SHASUMS256.txt")"
-(cd "$NODE_TMP" && printf '%s\n' "$checksum_line" | sha256sum -c -)
-mkdir -p "$MOUNT_DIR/usr/local"
-tar -xJf "$NODE_TMP/$NODE_TARBALL" -C "$MOUNT_DIR/usr/local" --strip-components=1
-for binary in node npm npx corepack; do
-    if [ -e "$MOUNT_DIR/usr/local/bin/$binary" ]; then
-        ln -sf "/usr/local/bin/$binary" "$MOUNT_DIR/usr/bin/$binary"
-    fi
-done
-chroot "$MOUNT_DIR" /usr/bin/node --version | grep -Fx "$NODE_VERSION" > /dev/null
-chroot "$MOUNT_DIR" /usr/bin/npm --version > /dev/null
+ROOTFS_DIR="$MOUNT_DIR"
+"#;
+const LINUX_ROOTFS_SCRIPT_SUFFIX: &str = r#"
 
 rm -rf "$MOUNT_DIR"/usr/share/doc/* "$MOUNT_DIR"/usr/share/man/* "$MOUNT_DIR"/usr/share/info/*
 find "$MOUNT_DIR/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name "en*" -exec rm -rf {} + 2>/dev/null || true
@@ -193,6 +208,24 @@ echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 
 echo "==> Debian rootfs populated successfully"
 "#;
+
+fn macos_rootfs_docker_script() -> String {
+    [
+        MACOS_ROOTFS_DOCKER_SCRIPT_PREFIX,
+        ROOTFS_TOOLCHAIN_INSTALL_SCRIPT,
+        MACOS_ROOTFS_DOCKER_SCRIPT_SUFFIX,
+    ]
+    .concat()
+}
+
+fn linux_rootfs_script() -> String {
+    [
+        LINUX_ROOTFS_SCRIPT_PREFIX,
+        ROOTFS_TOOLCHAIN_INSTALL_SCRIPT,
+        LINUX_ROOTFS_SCRIPT_SUFFIX,
+    ]
+    .concat()
+}
 
 fn should_use_docker_rootfs() -> bool {
     env_value("LSB_FORCE_DOCKER_ROOTFS")
@@ -318,7 +351,7 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("debian:{DEFAULT_DEBIAN_RELEASE}-slim"))
                     .arg("/bin/sh")
                     .arg("-c")
-                    .arg(MACOS_ROOTFS_DOCKER_SCRIPT),
+                    .arg(macos_rootfs_docker_script()),
                 "prepare rootfs in Docker",
             )?;
         } else {
@@ -335,7 +368,7 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("GUEST_BINARY={}", guest_binary.display()))
                     .arg("/bin/sh")
                     .arg("-c")
-                    .arg(LINUX_ROOTFS_SCRIPT),
+                    .arg(linux_rootfs_script()),
                 "prepare rootfs on Linux",
             )?;
         }
