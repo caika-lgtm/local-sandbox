@@ -95,6 +95,12 @@ pub fn ensure_linux_rootfs_prerequisites() -> Result<()> {
     if !command_exists("debootstrap") {
         missing_packages.push("debootstrap");
     }
+    if !command_exists("curl") {
+        missing_packages.push("curl");
+    }
+    if !command_exists("xz") {
+        missing_packages.push("xz-utils");
+    }
 
     if !missing_packages.is_empty() {
         run_command(

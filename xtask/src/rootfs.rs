@@ -13,6 +13,7 @@ use crate::guest::build_guest_for_platform;
 use crate::kernel::build_kernel_for_platform;
 
 const DEFAULT_DEBIAN_RELEASE: &str = "trixie";
+const DEFAULT_NODE_VERSION: &str = "v24.16.0";
 const DEFAULT_ROOTFS_SIZE_MB: u64 = 1024;
 const DEFAULT_CODESIGN_ENTITLEMENTS: &str = "lsb.entitlements";
 const INITRAMFS_DOCKER_SCRIPT: &str = r#"set -e
@@ -57,7 +58,7 @@ find . | cpio -o -H newc 2>/dev/null | gzip > /output/initramfs.cpio.gz
 "#;
 const MACOS_ROOTFS_DOCKER_SCRIPT: &str = r#"set -e
 apt-get update -qq
-apt-get install -y -qq debootstrap e2fsprogs > /dev/null 2>&1
+apt-get install -y -qq ca-certificates curl debootstrap e2fsprogs xz-utils > /dev/null 2>&1
 
 mkfs.ext4 -F -E lazy_itable_init=0 /rootfs.ext4
 mkdir -p /mnt/rootfs
@@ -80,6 +81,32 @@ chroot /mnt/rootfs apt-get install -y -qq --no-install-recommends \
     ca-certificates curl git iproute2 \
     openssh-client jq less procps xz-utils libgomp1 libatomic1 > /dev/null 2>&1
 
+case "${DEBOOTSTRAP_ARCH}" in
+    amd64) NODE_ARCH="x64" ;;
+    arm64) NODE_ARCH="arm64" ;;
+    *) echo "unsupported Node.js architecture: ${DEBOOTSTRAP_ARCH}" >&2; exit 1 ;;
+esac
+
+echo "==> Installing Node.js ${NODE_VERSION}..."
+NODE_DIST="node-${NODE_VERSION}-linux-${NODE_ARCH}"
+NODE_TARBALL="${NODE_DIST}.tar.xz"
+NODE_URL="https://nodejs.org/dist/${NODE_VERSION}"
+NODE_TMP="$(mktemp -d)"
+curl -fsSLo "${NODE_TMP}/${NODE_TARBALL}" "${NODE_URL}/${NODE_TARBALL}"
+curl -fsSLo "${NODE_TMP}/SHASUMS256.txt" "${NODE_URL}/SHASUMS256.txt"
+checksum_line="$(grep "  ${NODE_TARBALL}$" "${NODE_TMP}/SHASUMS256.txt")"
+(cd "${NODE_TMP}" && printf '%s\n' "${checksum_line}" | sha256sum -c -)
+mkdir -p /mnt/rootfs/usr/local
+tar -xJf "${NODE_TMP}/${NODE_TARBALL}" -C /mnt/rootfs/usr/local --strip-components=1
+for binary in node npm npx corepack; do
+    if [ -e "/mnt/rootfs/usr/local/bin/${binary}" ]; then
+        ln -sf "/usr/local/bin/${binary}" "/mnt/rootfs/usr/bin/${binary}"
+    fi
+done
+chroot /mnt/rootfs /usr/bin/node --version | grep -Fx "${NODE_VERSION}" > /dev/null
+chroot /mnt/rootfs /usr/bin/npm --version > /dev/null
+rm -rf "${NODE_TMP}"
+
 rm -rf /mnt/rootfs/usr/share/doc/* /mnt/rootfs/usr/share/man/* /mnt/rootfs/usr/share/info/*
 find /mnt/rootfs/usr/share/locale -mindepth 1 -maxdepth 1 ! -name "en*" -exec rm -rf {} + 2>/dev/null || true
 
@@ -98,7 +125,11 @@ echo "==> Debian rootfs populated successfully"
 "#;
 const LINUX_ROOTFS_SCRIPT: &str = r#"set -e
 mount -o loop "$ROOTFS_IMG" "$MOUNT_DIR"
+NODE_TMP=""
 cleanup() {
+    if [ -n "$NODE_TMP" ]; then
+        rm -rf "$NODE_TMP"
+    fi
     umount "$MOUNT_DIR" 2>/dev/null || true
     rmdir "$MOUNT_DIR" 2>/dev/null || true
 }
@@ -120,7 +151,32 @@ chroot "$MOUNT_DIR" apt-get update -qq
 chroot "$MOUNT_DIR" apt-get install -y -qq --no-install-recommends \
     ca-certificates curl git iproute2 \
     openssh-client jq less procps xz-utils libgomp1 libatomic1 \
-    nodejs ffmpeg > /dev/null 2>&1
+    ffmpeg > /dev/null 2>&1
+
+case "$DEBOOTSTRAP_ARCH" in
+    amd64) NODE_ARCH="x64" ;;
+    arm64) NODE_ARCH="arm64" ;;
+    *) echo "unsupported Node.js architecture: $DEBOOTSTRAP_ARCH" >&2; exit 1 ;;
+esac
+
+echo "==> Installing Node.js $NODE_VERSION..."
+NODE_DIST="node-${NODE_VERSION}-linux-${NODE_ARCH}"
+NODE_TARBALL="${NODE_DIST}.tar.xz"
+NODE_URL="https://nodejs.org/dist/${NODE_VERSION}"
+NODE_TMP="$(mktemp -d)"
+curl -fsSLo "$NODE_TMP/$NODE_TARBALL" "$NODE_URL/$NODE_TARBALL"
+curl -fsSLo "$NODE_TMP/SHASUMS256.txt" "$NODE_URL/SHASUMS256.txt"
+checksum_line="$(grep "  $NODE_TARBALL$" "$NODE_TMP/SHASUMS256.txt")"
+(cd "$NODE_TMP" && printf '%s\n' "$checksum_line" | sha256sum -c -)
+mkdir -p "$MOUNT_DIR/usr/local"
+tar -xJf "$NODE_TMP/$NODE_TARBALL" -C "$MOUNT_DIR/usr/local" --strip-components=1
+for binary in node npm npx corepack; do
+    if [ -e "$MOUNT_DIR/usr/local/bin/$binary" ]; then
+        ln -sf "/usr/local/bin/$binary" "$MOUNT_DIR/usr/bin/$binary"
+    fi
+done
+chroot "$MOUNT_DIR" /usr/bin/node --version | grep -Fx "$NODE_VERSION" > /dev/null
+chroot "$MOUNT_DIR" /usr/bin/npm --version > /dev/null
 
 rm -rf "$MOUNT_DIR"/usr/share/doc/* "$MOUNT_DIR"/usr/share/man/* "$MOUNT_DIR"/usr/share/info/*
 find "$MOUNT_DIR/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name "en*" -exec rm -rf {} + 2>/dev/null || true
@@ -253,6 +309,8 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("DEBIAN_RELEASE={DEFAULT_DEBIAN_RELEASE}"))
                     .arg("-e")
                     .arg(format!("DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch))
+                    .arg("-e")
+                    .arg(format!("NODE_VERSION={DEFAULT_NODE_VERSION}"))
                     .arg("-v")
                     .arg(format!("{}:/rootfs.ext4", rootfs_img.display()))
                     .arg("-v")
@@ -273,6 +331,7 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("MOUNT_DIR={}", mount_dir.display()))
                     .arg(format!("DEBIAN_RELEASE={DEFAULT_DEBIAN_RELEASE}"))
                     .arg(format!("DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch))
+                    .arg(format!("NODE_VERSION={DEFAULT_NODE_VERSION}"))
                     .arg(format!("GUEST_BINARY={}", guest_binary.display()))
                     .arg("/bin/sh")
                     .arg("-c")
