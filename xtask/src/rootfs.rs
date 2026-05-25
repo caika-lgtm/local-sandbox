@@ -13,6 +13,8 @@ use crate::guest::build_guest_for_platform;
 use crate::kernel::build_kernel_for_platform;
 
 const DEFAULT_DEBIAN_RELEASE: &str = "trixie";
+const DEFAULT_CONFLUENCE_CLI_VERSION: &str = "2.8.0";
+const DEFAULT_PCHURI_JIRA_CLI_VERSION: &str = "2.8.0";
 const DEFAULT_NODE_VERSION: &str = "v24.16.0";
 const DEFAULT_ROOTFS_SIZE_MB: u64 = 1024;
 const DEFAULT_CODESIGN_ENTITLEMENTS: &str = "lsb.entitlements";
@@ -131,12 +133,36 @@ install_google_workspace_cli() {
     echo "==> Installing @googleworkspace/cli..."
     chroot "${install_rootfs_dir}" /usr/bin/npm install -g @googleworkspace/cli
     chroot "${install_rootfs_dir}" /usr/bin/npm list -g @googleworkspace/cli > /dev/null
+    test -x "${install_rootfs_dir}/usr/local/bin/gws"
+    ln -sf "/usr/local/bin/gws" "${install_rootfs_dir}/usr/bin/gws"
+    chroot "${install_rootfs_dir}" /usr/bin/gws --help > /dev/null
+}
+
+install_atlassian_node_clis() {
+    install_rootfs_dir="$1"
+    echo "==> Installing @pchuri/jira-cli ${PCHURI_JIRA_CLI_VERSION}..."
+    chroot "${install_rootfs_dir}" /usr/bin/npm install -g "@pchuri/jira-cli@${PCHURI_JIRA_CLI_VERSION}"
+    chroot "${install_rootfs_dir}" /usr/bin/npm list -g "@pchuri/jira-cli@${PCHURI_JIRA_CLI_VERSION}" > /dev/null
+    test -x "${install_rootfs_dir}/usr/local/bin/jira"
+    ln -sf "/usr/local/bin/jira" "${install_rootfs_dir}/usr/bin/jira"
+    chroot "${install_rootfs_dir}" /usr/bin/jira --help > /dev/null
+
+    echo "==> Installing confluence-cli ${CONFLUENCE_CLI_VERSION}..."
+    chroot "${install_rootfs_dir}" /usr/bin/npm install -g "confluence-cli@${CONFLUENCE_CLI_VERSION}"
+    chroot "${install_rootfs_dir}" /usr/bin/npm list -g "confluence-cli@${CONFLUENCE_CLI_VERSION}" > /dev/null
+    test -x "${install_rootfs_dir}/usr/local/bin/confluence"
+    ln -sf "/usr/local/bin/confluence" "${install_rootfs_dir}/usr/bin/confluence"
+    chroot "${install_rootfs_dir}" /usr/bin/confluence --help > /dev/null
+    if [ -e "${install_rootfs_dir}/usr/local/bin/confluence-cli" ]; then
+        ln -sf "/usr/local/bin/confluence-cli" "${install_rootfs_dir}/usr/bin/confluence-cli"
+    fi
 }
 
 install_rootfs_toolchains() {
     install_rootfs_dir="$1"
     install_nodejs "${install_rootfs_dir}"
     install_google_workspace_cli "${install_rootfs_dir}"
+    install_atlassian_node_clis "${install_rootfs_dir}"
 }
 
 install_rootfs_toolchains "${ROOTFS_DIR}"
@@ -344,6 +370,14 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch))
                     .arg("-e")
                     .arg(format!("NODE_VERSION={DEFAULT_NODE_VERSION}"))
+                    .arg("-e")
+                    .arg(format!(
+                        "PCHURI_JIRA_CLI_VERSION={DEFAULT_PCHURI_JIRA_CLI_VERSION}"
+                    ))
+                    .arg("-e")
+                    .arg(format!(
+                        "CONFLUENCE_CLI_VERSION={DEFAULT_CONFLUENCE_CLI_VERSION}"
+                    ))
                     .arg("-v")
                     .arg(format!("{}:/rootfs.ext4", rootfs_img.display()))
                     .arg("-v")
@@ -365,6 +399,12 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!("DEBIAN_RELEASE={DEFAULT_DEBIAN_RELEASE}"))
                     .arg(format!("DEBOOTSTRAP_ARCH={}", platform.debootstrap_arch))
                     .arg(format!("NODE_VERSION={DEFAULT_NODE_VERSION}"))
+                    .arg(format!(
+                        "PCHURI_JIRA_CLI_VERSION={DEFAULT_PCHURI_JIRA_CLI_VERSION}"
+                    ))
+                    .arg(format!(
+                        "CONFLUENCE_CLI_VERSION={DEFAULT_CONFLUENCE_CLI_VERSION}"
+                    ))
                     .arg(format!("GUEST_BINARY={}", guest_binary.display()))
                     .arg("/bin/sh")
                     .arg("-c")
