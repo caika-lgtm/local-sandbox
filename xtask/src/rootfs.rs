@@ -15,6 +15,7 @@ use crate::kernel::build_kernel_for_platform;
 const DEFAULT_DEBIAN_RELEASE: &str = "trixie";
 const DEFAULT_CONFLUENCE_CLI_VERSION: &str = "2.8.0";
 const DEFAULT_PCHURI_JIRA_CLI_VERSION: &str = "2.8.0";
+const DEFAULT_OFFICEPARSER_VERSION: &str = "7.1.0";
 const DEFAULT_NODE_VERSION: &str = "v24.16.0";
 const DEFAULT_ROOTFS_SIZE_MB: u64 = 1024;
 const DEFAULT_CODESIGN_ENTITLEMENTS: &str = "lsb.entitlements";
@@ -158,11 +159,22 @@ install_atlassian_node_clis() {
     fi
 }
 
+install_officeparser() {
+    install_rootfs_dir="$1"
+    echo "==> Installing officeparser ${OFFICEPARSER_VERSION}..."
+    chroot "${install_rootfs_dir}" /usr/bin/npm install -g "officeparser@${OFFICEPARSER_VERSION}"
+    chroot "${install_rootfs_dir}" /usr/bin/npm list -g "officeparser@${OFFICEPARSER_VERSION}" > /dev/null
+    test -x "${install_rootfs_dir}/usr/local/bin/officeparser"
+    ln -sf "/usr/local/bin/officeparser" "${install_rootfs_dir}/usr/bin/officeparser"
+    chroot "${install_rootfs_dir}" /usr/bin/officeparser --help > /dev/null
+}
+
 install_rootfs_toolchains() {
     install_rootfs_dir="$1"
     install_nodejs "${install_rootfs_dir}"
     install_google_workspace_cli "${install_rootfs_dir}"
     install_atlassian_node_clis "${install_rootfs_dir}"
+    install_officeparser "${install_rootfs_dir}"
 }
 
 install_rootfs_toolchains "${ROOTFS_DIR}"
@@ -378,6 +390,8 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!(
                         "CONFLUENCE_CLI_VERSION={DEFAULT_CONFLUENCE_CLI_VERSION}"
                     ))
+                    .arg("-e")
+                    .arg(format!("OFFICEPARSER_VERSION={DEFAULT_OFFICEPARSER_VERSION}"))
                     .arg("-v")
                     .arg(format!("{}:/rootfs.ext4", rootfs_img.display()))
                     .arg("-v")
@@ -405,6 +419,7 @@ pub fn prepare_rootfs_for_platform(platform: &PlatformSpec) -> Result<()> {
                     .arg(format!(
                         "CONFLUENCE_CLI_VERSION={DEFAULT_CONFLUENCE_CLI_VERSION}"
                     ))
+                    .arg(format!("OFFICEPARSER_VERSION={DEFAULT_OFFICEPARSER_VERSION}"))
                     .arg(format!("GUEST_BINARY={}", guest_binary.display()))
                     .arg("/bin/sh")
                     .arg("-c")
