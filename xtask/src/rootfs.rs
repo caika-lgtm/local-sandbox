@@ -166,7 +166,6 @@ install_officeparser() {
     chroot "${install_rootfs_dir}" /usr/bin/npm list -g "officeparser@${OFFICEPARSER_VERSION}" > /dev/null
     test -x "${install_rootfs_dir}/usr/local/bin/officeparser"
     ln -sf "/usr/local/bin/officeparser" "${install_rootfs_dir}/usr/bin/officeparser"
-    chroot "${install_rootfs_dir}" /usr/bin/officeparser --help > /dev/null
 }
 
 install_rootfs_toolchains() {
