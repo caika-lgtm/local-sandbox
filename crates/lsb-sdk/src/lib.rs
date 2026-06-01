@@ -2,6 +2,7 @@ mod assets;
 mod process;
 mod runtime;
 mod shell;
+mod storage;
 mod types;
 mod watch;
 
@@ -18,5 +19,6 @@ pub use assets::{
 pub use process::ProcessHandle;
 pub use runtime::AsyncSandbox;
 pub use shell::{ShellEvent, ShellHandle, ShellReader, ShellWriter};
+pub use storage::{prepare_storage, NbdSource, PreparedStorage, StoragePrepareOptions};
 pub use types::{CommandOptions, ExecResult, SandboxConfig, WatchEvent};
 pub use watch::WatchHandle;

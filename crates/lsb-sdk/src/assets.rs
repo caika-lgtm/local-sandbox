@@ -30,6 +30,8 @@ pub struct SandboxInitResult {
     pub version: String,
     /// True when this call downloaded and extracted assets.
     pub downloaded: bool,
+    /// True when this call pinned the base rootfs for the first time.
+    pub pinned: bool,
     /// Concrete runtime asset paths derived from `data_dir`.
     pub paths: AssetPaths,
 }
@@ -60,21 +62,28 @@ pub fn init_sandbox_version(
         .unwrap_or_else(lsb_platform::default_data_dir);
     let paths = asset_paths(&data_dir);
 
+    let version_record_path = format!("{}/cas/base-versions/{}.json", data_dir, version);
+    let was_pinned = std::path::Path::new(&version_record_path).exists();
+
     if !options.force && assets_ready_for_version(&data_dir, version) {
+        lsb_store::pin_base_version(&data_dir, &paths.rootfs, version, false)?;
         return Ok(SandboxInitResult {
             data_dir,
             version: version.to_string(),
             downloaded: false,
+            pinned: !was_pinned,
             paths,
         });
     }
 
     download_os_image_version(&data_dir, version)?;
+    lsb_store::pin_base_version(&data_dir, &paths.rootfs, version, options.force)?;
 
     Ok(SandboxInitResult {
         data_dir,
         version: version.to_string(),
         downloaded: true,
+        pinned: true,
         paths,
     })
 }

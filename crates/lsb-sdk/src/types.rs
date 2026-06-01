@@ -30,6 +30,8 @@ pub struct SandboxConfig {
     pub expose_host: Vec<ExposeHostMapping>,
     /// Boot from a named checkpoint instead of base rootfs.
     pub from: Option<String>,
+    /// Boot from a pinned base runtime asset version. Defaults to data_dir/VERSION.
+    pub base_version: Option<String>,
     /// Optional stable instance id for the working rootfs directory.
     pub instance_id: Option<String>,
 }
@@ -48,6 +50,7 @@ impl Default for SandboxConfig {
             ports: vec![],
             expose_host: vec![],
             from: None,
+            base_version: None,
             instance_id: None,
         }
     }

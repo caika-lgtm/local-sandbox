@@ -1,8 +1,13 @@
 mod backend;
+mod base;
 pub mod cas;
 mod nbd;
 
 pub use backend::FlatFileBackend;
+pub use base::{
+    pin_base_version, pin_rootfs, read_data_dir_version, resolve_base_version, BaseVersionRecord,
+    PinnedRootfs,
+};
 pub use cas::{CasBackend, ChunkIndex, ChunkStore, LocalChunkStore};
 pub use nbd::NbdBackend;
 
@@ -110,10 +115,13 @@ pub fn start_cas_nbd_server(
     let (index, fallback, source_idx) = if Path::new(index_path).exists() {
         info!("loading CAS index from {}", index_path);
         let idx = ChunkIndex::load(index_path)?;
-        let fallback = idx
-            .fallback_path
-            .as_ref()
-            .and_then(|path| FlatFileBackend::open(path).ok());
+        let fallback =
+            match idx.fallback_path.as_ref() {
+                Some(path) => Some(FlatFileBackend::open(path).with_context(|| {
+                    format!("failed to open CAS index fallback rootfs: {}", path)
+                })?),
+                None => None,
+            };
         (idx, fallback, Some(index_path.to_string()))
     } else {
         let fallback = FlatFileBackend::open(rootfs_path).with_context(|| {
@@ -125,9 +133,9 @@ pub fn start_cas_nbd_server(
     };
 
     let mut backend = if let Some(fallback) = fallback {
-        CasBackend::with_fallback(store, index, fallback)
+        CasBackend::with_fallback(store, index, fallback)?
     } else {
-        CasBackend::new(store, index)
+        CasBackend::new(store, index)?
     };
     backend.source_index_path = source_idx;
     if disk_size > 0 {

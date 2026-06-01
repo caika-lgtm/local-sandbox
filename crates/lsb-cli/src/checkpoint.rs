@@ -30,15 +30,15 @@ pub(crate) fn create(
     }
 
     let prepared = vm::prepare_vm(vm_args, &cfg, from)?;
-    let result = vm::run_command(&prepared, &command)?;
+    let result = vm::run_command_for_checkpoint(&prepared, &command)?;
 
-    std::fs::create_dir_all(&checkpoints_dir)?;
+    std::fs::create_dir_all(&prepared.checkpoints_dir)?;
     eprintln!("lsb: saving checkpoint '{}'...", name);
     if let Some(ref nbd_handle) = result.nbd_handle {
-        let index_path = format!("{}/{}.idx", checkpoints_dir, name);
+        let index_path = format!("{}/{}.idx", prepared.checkpoints_dir, name);
         nbd_handle.save_checkpoint(&index_path)?;
     } else {
-        let checkpoint_path = format!("{}/{}.ext4", checkpoints_dir, name);
+        let checkpoint_path = format!("{}/{}.ext4", prepared.checkpoints_dir, name);
         vm::clone_file(&prepared.work_rootfs, &checkpoint_path)?;
     }
     eprintln!("lsb: checkpoint '{}' saved", name);

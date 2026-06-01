@@ -436,6 +436,7 @@ test('supported builds reject direct mounts without numeric flags before boot', 
 
   const error = await t.throwsAsync(() =>
     Sandbox.start({
+      // @ts-expect-error flags are intentionally omitted to verify runtime validation.
       mounts: [{ type: 'direct', hostPath: hostDir, guestPath: '/workspace' }],
     }),
   )
@@ -588,17 +589,19 @@ test.serial('supported runtime checkpoints can be resumed through from', async (
 
   const { Sandbox } = entrypoint
   const checkpointName = `nodejs-test-${process.pid}-${Date.now()}`
-  const checkpointPath = join(defaultRuntimeDataDir, 'checkpoints', `${checkpointName}.ext4`)
+  const checkpointIndexPath = join(defaultRuntimeDataDir, 'checkpoints', `${checkpointName}.idx`)
+  const checkpointExt4Path = join(defaultRuntimeDataDir, 'checkpoints', `${checkpointName}.ext4`)
   let base: SandboxInstance | null = null
   let resumed: SandboxInstance | null = null
 
   try {
-    rmSync(checkpointPath, { force: true })
+    rmSync(checkpointIndexPath, { force: true })
+    rmSync(checkpointExt4Path, { force: true })
 
     base = await Sandbox.start({ dataDir: readiness.dataDir })
     await base.exec('mkdir -p /workspace && printf "%s" "checkpoint-ready" > /workspace/state.txt')
     await base.checkpoint(checkpointName)
-    t.true(existsSync(checkpointPath))
+    t.true(existsSync(checkpointIndexPath))
 
     // Checkpoints are currently resolved from the default runtime data dir.
     resumed = await Sandbox.start({ dataDir: readiness.dataDir, from: checkpointName })
@@ -607,6 +610,7 @@ test.serial('supported runtime checkpoints can be resumed through from', async (
   } finally {
     await resumed?.stop()
     await base?.stop()
-    rmSync(checkpointPath, { force: true })
+    rmSync(checkpointIndexPath, { force: true })
+    rmSync(checkpointExt4Path, { force: true })
   }
 })

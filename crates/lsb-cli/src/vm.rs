@@ -13,6 +13,8 @@ use crate::config::LsbConfig;
 const MS_RDONLY: u64 = 1;
 
 pub(crate) struct PreparedVm {
+    pub data_dir: String,
+    pub checkpoints_dir: String,
     pub instance_dir: String,
     pub source_rootfs: String,
     pub work_rootfs: String,
@@ -104,6 +106,9 @@ pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &LsbConfig, from: Option<&str>) -> Re
 
     let data_dir = lsb_vm::default_data_dir();
     let paths = asset_paths(&data_dir);
+    if from.is_some() && vm.base_version.is_some() {
+        bail!("--from and --base-version cannot be used together");
+    }
 
     // Auto-download assets when using default paths
     if vm.kernel.is_none()
@@ -125,43 +130,26 @@ pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &LsbConfig, from: Option<&str>) -> Re
         );
     }
 
-    // Determine source for working copy: checkpoint or base rootfs
-    let mut cas_index = None;
-    let source = match from {
-        Some(name) => {
-            lsb_vm::validate_checkpoint_name(name).map_err(|e| anyhow::anyhow!(e))?;
-            let idx_path = format!("{}/{}.idx", paths.checkpoints_dir, name);
-            let ext4_path = format!("{}/{}.ext4", paths.checkpoints_dir, name);
-            if std::path::Path::new(&idx_path).exists() {
-                cas_index = Some(idx_path);
-                rootfs_path.clone()
-            } else if std::path::Path::new(&ext4_path).exists() {
-                ext4_path
-            } else {
-                bail!("Checkpoint '{}' not found", name);
-            }
-        }
-        None => {
-            if !std::path::Path::new(&rootfs_path).exists() {
-                bail!(
-                    "Rootfs not found at {}. Run `lsb init` to download.",
-                    rootfs_path
-                );
-            }
-            rootfs_path
-        }
-    };
+    let storage = lsb_sdk::prepare_storage(lsb_sdk::StoragePrepareOptions {
+        data_dir: &data_dir,
+        checkpoints_dir: &paths.checkpoints_dir,
+        rootfs_path: &rootfs_path,
+        from,
+        base_version: vm.base_version.as_deref(),
+        custom_rootfs: vm.rootfs.is_some(),
+        direct: std::env::var("LSB_STORAGE").unwrap_or_default() == "direct",
+    })?;
 
     // Create per-instance working copy (clean any stale dir from PID reuse)
     let instance_dir = format!("{}/{}", paths.instances_dir, std::process::id());
     let _ = std::fs::remove_dir_all(&instance_dir);
     std::fs::create_dir_all(&instance_dir)?;
     let work_rootfs = format!("{instance_dir}/rootfs.ext4");
-    if cas_index.is_none() {
+    if !storage.is_nbd() {
         if verbose {
             eprintln!("lsb: creating working copy...");
         }
-        lsb_platform::copy_file_cow(&source, &work_rootfs)?;
+        lsb_platform::copy_file_cow(&storage.direct_source_rootfs, &work_rootfs)?;
     } else {
         std::fs::File::create(&work_rootfs)?;
     }
@@ -169,7 +157,11 @@ pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &LsbConfig, from: Option<&str>) -> Re
     // Extend to requested disk size
     let f = std::fs::OpenOptions::new().write(true).open(&work_rootfs)?;
     let target = disk_size * 1024 * 1024;
-    let current = f.metadata()?.len();
+    let current = if storage.is_nbd() {
+        storage.logical_size
+    } else {
+        f.metadata()?.len()
+    };
     if target < current {
         bail!(
             "--disk-size {}MB is smaller than the base image ({}MB)",
@@ -177,7 +169,7 @@ pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &LsbConfig, from: Option<&str>) -> Re
             current / 1024 / 1024
         );
     }
-    if target > current {
+    if !storage.is_nbd() && target > current {
         f.set_len(target)?;
     }
     drop(f);
@@ -193,10 +185,12 @@ pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &LsbConfig, from: Option<&str>) -> Re
     };
 
     Ok(PreparedVm {
+        data_dir,
+        checkpoints_dir: paths.checkpoints_dir,
         instance_dir,
-        source_rootfs: source,
+        source_rootfs: storage.active_source_rootfs().to_string(),
         work_rootfs,
-        cas_index,
+        cas_index: storage.cas_index().map(str::to_string),
         kernel_path,
         initrd_path,
         cpus,
@@ -253,14 +247,11 @@ pub(crate) fn start_nbd(prepared: &PreparedVm) -> Result<Option<lsb_store::NbdHa
     }
 
     let socket_path = format!("{}/nbd.sock", prepared.instance_dir);
-    let data_dir = lsb_vm::default_data_dir();
-    let cas_dir = format!("{}/cas", data_dir);
-    let index_path = if let Some(ref idx) = prepared.cas_index {
-        idx.clone()
-    } else {
-        let source_hash = blake3::hash(prepared.source_rootfs.as_bytes()).to_hex();
-        format!("{}/cas/indexes/{}.idx", data_dir, &source_hash[..16])
-    };
+    let cas_dir = format!("{}/cas", prepared.data_dir);
+    let index_path = prepared
+        .cas_index
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("NBD storage requires a CAS index"))?;
     let target_size = prepared.disk_size * 1024 * 1024;
 
     Ok(Some(lsb_store::start_cas_nbd_server(
@@ -273,6 +264,21 @@ pub(crate) fn start_nbd(prepared: &PreparedVm) -> Result<Option<lsb_store::NbdHa
 }
 
 pub(crate) fn run_command(prepared: &PreparedVm, command: &[String]) -> Result<RunResult> {
+    run_command_inner(prepared, command, false)
+}
+
+pub(crate) fn run_command_for_checkpoint(
+    prepared: &PreparedVm,
+    command: &[String],
+) -> Result<RunResult> {
+    run_command_inner(prepared, command, true)
+}
+
+fn run_command_inner(
+    prepared: &PreparedVm,
+    command: &[String],
+    sync_before_stop: bool,
+) -> Result<RunResult> {
     if prepared.verbose {
         eprintln!("lsb: kernel={}", prepared.kernel_path);
         eprintln!("lsb: rootfs={} (work copy)", prepared.work_rootfs);
@@ -347,6 +353,10 @@ pub(crate) fn run_command(prepared: &PreparedVm, command: &[String]) -> Result<R
             &mut std::io::stderr(),
         )?
     };
+
+    if sync_before_stop {
+        sandbox.exec(&["sync"], &mut std::io::sink(), &mut std::io::sink())?;
+    }
 
     drop(proxy_handle);
     let _ = sandbox.stop();

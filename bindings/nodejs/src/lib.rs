@@ -37,8 +37,13 @@ pub use types::{
 pub async fn init_sandbox(opts: Option<SandboxInitOptions>) -> Result<SandboxInitResult> {
   #[cfg(lsb_nodejs_supported)]
   {
-    let options = build_init_options(opts.unwrap_or_default());
-    let result = tokio::task::spawn_blocking(move || lsb_sdk::init_sandbox(options))
+    let opts = opts.unwrap_or_default();
+    let version = opts.version.clone();
+    let options = build_init_options(opts);
+    let result = tokio::task::spawn_blocking(move || match version {
+      Some(version) => lsb_sdk::init_sandbox_version(options, &version),
+      None => lsb_sdk::init_sandbox(options),
+    })
       .await
       .map_err(to_napi_error)?
       .map_err(to_napi_error)?;

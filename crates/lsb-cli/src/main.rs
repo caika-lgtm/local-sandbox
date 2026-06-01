@@ -57,19 +57,10 @@ fn main() -> Result<()> {
             let _ = std::fs::remove_dir_all(&prepared.instance_dir);
             process::exit(result?);
         }
-        Commands::Init { force } => {
+        Commands::Init { version, force } => {
             let data_dir = default_data_dir();
-            if force {
-                let _ = std::fs::remove_file(format!("{}/VERSION", data_dir));
-            }
-            if assets::assets_ready(&data_dir) {
-                eprintln!(
-                    "lsb: OS image already up to date ({})",
-                    assets::CURRENT_VERSION
-                );
-            } else {
-                assets::download_os_image(&data_dir)?;
-            }
+            let version = version.as_deref().unwrap_or(assets::CURRENT_VERSION);
+            assets::init_os_image_version(&data_dir, version, force)?;
         }
         Commands::Upgrade => {
             let data_dir = default_data_dir();
@@ -141,7 +132,9 @@ fn run_console(prepared: &vm::PreparedVm) -> Result<i32> {
         prepared.cpus, prepared.memory, prepared.disk_size
     );
 
-    let sandbox = vm::build_sandbox(prepared, true, None, None)?;
+    let nbd_handle = vm::start_nbd(prepared)?;
+    let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());
+    let sandbox = vm::build_sandbox(prepared, true, None, nbd_uri.as_deref())?;
     eprintln!("lsb: VM created and validated successfully");
 
     let state_rx = sandbox.state_channel();

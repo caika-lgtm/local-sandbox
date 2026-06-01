@@ -44,6 +44,7 @@ pub(crate) fn build_sandbox_config(opts: StartOptions) -> anyhow::Result<lsb_sdk
 
   config.instance_id = opts.instanceId;
   config.from = opts.from;
+  config.base_version = opts.baseVersion;
   config.data_dir = opts.dataDir;
   config.cpus = opts.cpus.unwrap_or(config.cpus as u32) as usize;
   config.memory_mb = u64::from(opts.memoryMb.unwrap_or(config.memory_mb as u32));

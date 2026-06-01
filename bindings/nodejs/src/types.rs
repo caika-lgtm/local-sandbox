@@ -79,6 +79,9 @@ pub struct StartOptions {
   pub diskSizeMb: Option<u32>,
   /// Runtime data directory containing VM assets and instances.
   pub dataDir: Option<String>,
+  /// Pinned base runtime asset version to boot from when `from` is not set.
+  /// Defaults to the initialized VERSION in `dataDir`.
+  pub baseVersion: Option<String>,
   /// Host-to-guest port forwards.
   pub ports: Option<Vec<PortMappingConfig>>,
   /// Directory mounts applied during boot.
@@ -96,6 +99,8 @@ pub struct StartOptions {
 pub struct SandboxInitOptions {
   /// Runtime data directory. Defaults to `~/.local/share/lsb`.
   pub dataDir: Option<String>,
+  /// Runtime asset version to initialize and pin as a base image. Defaults to this package version.
+  pub version: Option<String>,
   /// Re-download assets even when the expected files and VERSION marker already exist.
   pub force: Option<bool>,
 }
@@ -250,6 +255,7 @@ impl Default for StartOptions {
       memoryMb: None,
       diskSizeMb: None,
       dataDir: None,
+      baseVersion: None,
       ports: None,
       mounts: None,
       network: None,
@@ -261,6 +267,7 @@ impl Default for SandboxInitOptions {
   fn default() -> Self {
     Self {
       dataDir: None,
+      version: None,
       force: None,
     }
   }

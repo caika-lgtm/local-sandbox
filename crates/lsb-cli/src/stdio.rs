@@ -710,7 +710,14 @@ pub(crate) fn run_stdio(prepared: &PreparedVm) -> Result<i32> {
                         continue;
                     }
                 };
-                handle_checkpoint(&sandbox, prepared, req.id, &params.name, &out)?;
+                handle_checkpoint(
+                    &sandbox,
+                    prepared,
+                    nbd_handle.as_ref(),
+                    req.id,
+                    &params.name,
+                    &out,
+                )?;
                 let _ = sandbox.stop();
                 drop(event_tx);
                 let _ = event_thread.join();
@@ -969,6 +976,7 @@ fn handle_write_file(
 fn handle_checkpoint(
     sandbox: &Sandbox,
     prepared: &PreparedVm,
+    nbd_handle: Option<&lsb_store::NbdHandle>,
     id: serde_json::Value,
     name: &str,
     out: &SharedWriter,
@@ -984,11 +992,7 @@ fn handle_checkpoint(
         );
     }
 
-    let data_dir = lsb_vm::default_data_dir();
-    let checkpoints_dir = format!("{}/checkpoints", data_dir);
-    let checkpoint_path = format!("{}/{}.ext4", checkpoints_dir, name);
-
-    if let Err(e) = std::fs::create_dir_all(&checkpoints_dir) {
+    if let Err(e) = std::fs::create_dir_all(&prepared.checkpoints_dir) {
         return send_error_shared(
             out,
             id,
@@ -997,13 +1001,26 @@ fn handle_checkpoint(
         );
     }
 
-    if let Err(e) = vm::clone_file(&prepared.work_rootfs, &checkpoint_path) {
-        return send_error_shared(
-            out,
-            id,
-            SERVER_ERROR,
-            format!("checkpoint clone failed: {}", e),
-        );
+    if let Some(handle) = nbd_handle {
+        let checkpoint_path = format!("{}/{}.idx", prepared.checkpoints_dir, name);
+        if let Err(e) = handle.save_checkpoint(&checkpoint_path) {
+            return send_error_shared(
+                out,
+                id,
+                SERVER_ERROR,
+                format!("checkpoint save failed: {}", e),
+            );
+        }
+    } else {
+        let checkpoint_path = format!("{}/{}.ext4", prepared.checkpoints_dir, name);
+        if let Err(e) = vm::clone_file(&prepared.work_rootfs, &checkpoint_path) {
+            return send_error_shared(
+                out,
+                id,
+                SERVER_ERROR,
+                format!("checkpoint clone failed: {}", e),
+            );
+        }
     }
 
     send_result_shared(out, id, EmptyResult {})

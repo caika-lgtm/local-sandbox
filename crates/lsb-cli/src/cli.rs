@@ -22,6 +22,10 @@ pub(crate) struct VmArgs {
     #[arg(long, env = "LSB_ROOTFS")]
     pub rootfs: Option<String>,
 
+    /// Pinned base runtime asset version to boot from (defaults to dataDir/VERSION)
+    #[arg(long)]
+    pub base_version: Option<String>,
+
     /// Path to initramfs (for loading VirtIO modules)
     #[arg(long, env = "LSB_INITRD")]
     pub initrd: Option<String>,
@@ -96,6 +100,10 @@ pub(crate) enum Commands {
 
     /// Download or update OS image assets
     Init {
+        /// Runtime asset version to initialize (defaults to this CLI version)
+        #[arg(long)]
+        version: Option<String>,
+
         /// Force re-download even if assets exist
         #[arg(long)]
         force: bool,

@@ -18,24 +18,35 @@ pub fn assets_ready(data_dir: &str) -> bool {
 
 /// Download and extract OS image assets from GitHub Releases via the SDK.
 pub fn download_os_image(data_dir: &str) -> Result<()> {
-    download_os_image_version(data_dir, CURRENT_VERSION)
+    init_os_image_version(data_dir, CURRENT_VERSION, true)
 }
 
-fn download_os_image_version(data_dir: &str, version: &str) -> Result<()> {
+pub fn init_os_image_version(data_dir: &str, version: &str, force: bool) -> Result<()> {
     let platform = supported_runtime_platform()?;
     let tag = platform.release_tag(version);
 
-    eprintln!("lsb: downloading OS image ({})...", tag);
-    lsb_sdk::init_sandbox_version(
+    eprintln!("lsb: initializing OS image ({})...", tag);
+    let result = lsb_sdk::init_sandbox_version(
         SandboxInitOptions {
             data_dir: Some(data_dir.to_string()),
-            force: true,
+            force,
         },
         version,
     )?;
 
-    eprintln!("lsb: OS image ready ({})", version);
+    if result.downloaded {
+        eprintln!("lsb: OS image downloaded ({})", version);
+    } else {
+        eprintln!("lsb: OS image already up to date ({})", version);
+    }
+    if result.pinned {
+        eprintln!("lsb: base rootfs pinned ({})", version);
+    }
     Ok(())
+}
+
+pub fn download_os_image_version(data_dir: &str, version: &str) -> Result<()> {
+    init_os_image_version(data_dir, version, true)
 }
 
 #[derive(Deserialize)]

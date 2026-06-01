@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::process::{collect_exec_stream, spawn_process_threads, ProcessHandle};
 use crate::shell::{ShellEvent, ShellHandle, ShellReader, ShellWriter};
+use crate::storage::{prepare_storage, StoragePrepareOptions};
 use crate::types::{CommandOptions, ExecResult, SandboxConfig};
 use crate::watch::{spawn_watch_thread, WatchHandle};
 use crate::{ReadDirResponse, StatResponse};
@@ -112,7 +113,14 @@ impl AsyncSandbox {
         std::thread::Builder::new()
             .name("lsb-vm".into())
             .spawn(move || match boot_vm(config) {
-                Ok((sandbox, instance_dir, checkpoints_dir, proxy_handle, fwd_handle)) => {
+                Ok((
+                    sandbox,
+                    instance_dir,
+                    checkpoints_dir,
+                    proxy_handle,
+                    fwd_handle,
+                    nbd_handle,
+                )) => {
                     if ready_tx.send(Ok(instance_dir.clone())).is_err() {
                         return;
                     }
@@ -123,6 +131,7 @@ impl AsyncSandbox {
                         cmd_rx,
                         proxy_handle,
                         fwd_handle,
+                        nbd_handle,
                     );
                 }
                 Err(e) => {
@@ -387,7 +396,7 @@ impl AsyncSandbox {
         reply_rx.await?
     }
 
-    /// Save the current rootfs state as a named checkpoint (CoW clone).
+    /// Save the current rootfs state as a named checkpoint.
     /// Future VMs can boot from this checkpoint via `SandboxConfig::from`.
     pub async fn checkpoint(&self, name: &str) -> Result<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -429,6 +438,7 @@ fn boot_vm(
     String,
     Option<lsb_proxy::ProxyHandle>,
     Option<lsb_vm::PortForwardHandle>,
+    Option<lsb_store::NbdHandle>,
 )> {
     let data_dir = config.data_dir.unwrap_or_else(lsb_vm::default_data_dir);
     let paths = asset_paths(&data_dir);
@@ -444,25 +454,19 @@ fn boot_vm(
         );
     }
 
-    let source = match &config.from {
-        Some(name) => {
-            lsb_vm::validate_checkpoint_name(name).map_err(|e| anyhow::anyhow!(e))?;
-            let path = format!("{}/{}.ext4", paths.checkpoints_dir, name);
-            if !std::path::Path::new(&path).exists() {
-                bail!("Checkpoint '{}' not found", name);
-            }
-            path
-        }
-        None => {
-            if !std::path::Path::new(&rootfs_path).exists() {
-                bail!(
-                    "Rootfs not found at {}. Run `lsb init` to download.",
-                    rootfs_path
-                );
-            }
-            rootfs_path
-        }
-    };
+    if config.from.is_some() && config.base_version.is_some() {
+        bail!("SandboxConfig::from and SandboxConfig::base_version cannot be used together");
+    }
+
+    let storage = prepare_storage(StoragePrepareOptions {
+        data_dir: &data_dir,
+        checkpoints_dir: &paths.checkpoints_dir,
+        rootfs_path: &rootfs_path,
+        from: config.from.as_deref(),
+        base_version: config.base_version.as_deref(),
+        custom_rootfs: false,
+        direct: std::env::var("LSB_STORAGE").unwrap_or_default() == "direct",
+    })?;
 
     let instance_dir = match config.instance_id {
         Some(id) => {
@@ -489,12 +493,27 @@ fn boot_vm(
     let _ = std::fs::remove_dir_all(&instance_dir);
     std::fs::create_dir_all(&instance_dir)?;
     let work_rootfs = format!("{instance_dir}/rootfs.ext4");
-    lsb_platform::copy_file_cow(&source, &work_rootfs)?;
+    if storage.nbd_source.is_none() {
+        lsb_platform::copy_file_cow(&storage.direct_source_rootfs, &work_rootfs)?;
+    } else {
+        std::fs::File::create(&work_rootfs)?;
+    }
 
     let f = std::fs::OpenOptions::new().write(true).open(&work_rootfs)?;
     let target = config.disk_size_mb * 1024 * 1024;
-    let current = f.metadata()?.len();
-    if target > current {
+    let current = if storage.nbd_source.is_some() {
+        storage.logical_size
+    } else {
+        f.metadata()?.len()
+    };
+    if target < current {
+        bail!(
+            "disk_size_mb {}MB is smaller than the base image ({}MB)",
+            config.disk_size_mb,
+            current / 1024 / 1024
+        );
+    }
+    if storage.nbd_source.is_none() && target > current {
         f.set_len(target)?;
     }
     drop(f);
@@ -518,6 +537,20 @@ fn boot_vm(
         (None, None)
     };
 
+    let nbd_handle = if let Some(ref nbd_source) = storage.nbd_source {
+        let socket_path = format!("{instance_dir}/nbd.sock");
+        Some(lsb_store::start_cas_nbd_server(
+            &nbd_source.rootfs_path,
+            &format!("{data_dir}/cas"),
+            &nbd_source.index_path,
+            &socket_path,
+            target,
+        )?)
+    } else {
+        None
+    };
+    let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());
+
     let mut builder = lsb_vm::Sandbox::builder()
         .kernel(&kernel_path)
         .rootfs(&work_rootfs)
@@ -527,6 +560,9 @@ fn boot_vm(
 
     if let Some(fd) = vm_fd {
         builder = builder.network_fd(fd);
+    }
+    if let Some(uri) = nbd_uri {
+        builder = builder.nbd_uri(uri);
     }
     if let Some(ref initrd) = initrd_path {
         builder = builder.initrd(initrd);
@@ -572,6 +608,7 @@ fn boot_vm(
         paths.checkpoints_dir,
         proxy_handle,
         fwd_handle,
+        nbd_handle,
     ))
 }
 
@@ -582,6 +619,7 @@ fn run_vm_loop(
     cmd_rx: std::sync::mpsc::Receiver<SandboxCmd>,
     proxy_handle: Option<lsb_proxy::ProxyHandle>,
     _fwd_handle: Option<lsb_vm::PortForwardHandle>,
+    nbd_handle: Option<lsb_store::NbdHandle>,
 ) {
     let env: HashMap<String, String> = proxy_handle
         .as_ref()
@@ -677,12 +715,18 @@ fn run_vm_loop(
                 let result = (|| -> Result<()> {
                     lsb_vm::validate_checkpoint_name(&name).map_err(|e| anyhow::anyhow!(e))?;
                     std::fs::create_dir_all(checkpoints_dir)?;
-                    let checkpoint_path = format!("{}/{}.ext4", checkpoints_dir, name);
-                    if std::path::Path::new(&checkpoint_path).exists() {
-                        std::fs::remove_file(&checkpoint_path)?;
+                    sandbox.exec(&["sync"], &mut std::io::sink(), &mut std::io::sink())?;
+                    if let Some(ref handle) = nbd_handle {
+                        let checkpoint_path = format!("{}/{}.idx", checkpoints_dir, name);
+                        handle.save_checkpoint(&checkpoint_path)?;
+                    } else {
+                        let checkpoint_path = format!("{}/{}.ext4", checkpoints_dir, name);
+                        if std::path::Path::new(&checkpoint_path).exists() {
+                            std::fs::remove_file(&checkpoint_path)?;
+                        }
+                        let work_rootfs = format!("{instance_dir}/rootfs.ext4");
+                        lsb_platform::copy_file_cow(&work_rootfs, &checkpoint_path)?;
                     }
-                    let work_rootfs = format!("{instance_dir}/rootfs.ext4");
-                    lsb_platform::copy_file_cow(&work_rootfs, &checkpoint_path)?;
                     info!("checkpoint '{}' saved", name);
                     Ok(())
                 })();

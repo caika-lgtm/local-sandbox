@@ -72,6 +72,16 @@ const init = await initSandbox()
 console.log(init.dataDir, init.version, init.downloaded)
 ```
 
+`initSandbox()` defaults to this package version and pins that base rootfs.
+`Sandbox.start()` defaults to the initialized `VERSION` in the runtime data directory. You only need
+to pass a version when preparing or booting from an older pinned base.
+
+```ts
+await initSandbox({ version: '0.3.8' })
+
+const sandbox = await Sandbox.start({ baseVersion: '0.3.8' })
+```
+
 ### Pass argv directly or run through a shell
 
 ```ts

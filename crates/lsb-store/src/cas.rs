@@ -182,50 +182,44 @@ pub struct CasBackend {
 }
 
 impl CasBackend {
-    pub fn new(store: Box<dyn ChunkStore>, index: ChunkIndex) -> Self {
-        let parents = Self::load_parent_chain(&index);
-        Self {
+    pub fn new(store: Box<dyn ChunkStore>, index: ChunkIndex) -> Result<Self> {
+        let parents = Self::load_parent_chain(&index)?;
+        Ok(Self {
             store,
             index: RwLock::new(index),
             dirty: RwLock::new(HashMap::new()),
             parents: RwLock::new(parents),
             fallback: None,
             source_index_path: None,
-        }
+        })
     }
 
     pub fn with_fallback(
         store: Box<dyn ChunkStore>,
         index: ChunkIndex,
         fallback: crate::backend::FlatFileBackend,
-    ) -> Self {
-        let parents = Self::load_parent_chain(&index);
-        Self {
+    ) -> Result<Self> {
+        let parents = Self::load_parent_chain(&index)?;
+        Ok(Self {
             store,
             index: RwLock::new(index),
             dirty: RwLock::new(HashMap::new()),
             parents: RwLock::new(parents),
             fallback: Some(fallback),
             source_index_path: None,
-        }
+        })
     }
 
-    fn load_parent_chain(index: &ChunkIndex) -> Vec<ChunkIndex> {
+    fn load_parent_chain(index: &ChunkIndex) -> Result<Vec<ChunkIndex>> {
         let mut chain = Vec::new();
         let mut current_parent = index.parent_path.clone();
         while let Some(path) = current_parent {
-            match ChunkIndex::load(&path) {
-                Ok(parent) => {
-                    current_parent = parent.parent_path.clone();
-                    chain.push(parent);
-                }
-                Err(e) => {
-                    tracing::warn!("failed to load parent index {}: {}", path, e);
-                    break;
-                }
-            }
+            let parent = ChunkIndex::load(&path)
+                .with_context(|| format!("failed to load parent CAS index: {}", path))?;
+            current_parent = parent.parent_path.clone();
+            chain.push(parent);
         }
-        chain
+        Ok(chain)
     }
 
     pub fn size(&self) -> u64 {
@@ -374,10 +368,13 @@ impl CasBackend {
     fn fetch_chunk(&self, hash: &str) -> std::io::Result<Vec<u8>> {
         match self.store.get(hash) {
             Ok(Some(data)) => Ok(data),
-            Ok(None) => {
-                tracing::warn!("chunk {} not found in store, returning zeros", hash);
-                Ok(vec![0u8; CHUNK_SIZE])
-            }
+            Ok(None) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "chunk {} not found in CAS store; the checkpoint may be corrupted or the CAS chunks directory may have been modified",
+                    hash
+                ),
+            )),
             Err(e) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 e.to_string(),

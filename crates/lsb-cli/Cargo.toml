@@ -17,7 +17,6 @@ lsb-store = { path = "../lsb-store" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 libc = "0.2"
-blake3 = "1"
 flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

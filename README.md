@@ -78,8 +78,16 @@ Port forwards can also be set in `lsb.json` (see [Config file](#config-file)).
 ### Checkpoints
 
 Checkpoints save the disk state so you can reuse an environment across runs.
+By default, checkpoints are CAS/NBD indexes that reference a pinned base rootfs
+by runtime asset version. After `rootfs.ext4` is updated, new sandboxes use the
+new base and existing checkpoints continue to use the base they were created
+from.
 
 ```sh
+# Initialize the current CLI version and boot from that current base
+lsb init
+lsb run -- sh
+
 # Set up an environment and save it
 lsb checkpoint create myenv --allow-net -- sh -c 'apt-get install -y python3 gcc'
 
@@ -88,6 +96,10 @@ lsb run --from myenv -- python3 script.py
 
 # Branch from an existing checkpoint
 lsb checkpoint create myenv2 --from myenv --allow-net -- sh -c 'pip install numpy'
+
+# Optional: prepare and boot from a specific older pinned base version
+lsb init --version 0.3.8
+lsb run --base-version 0.3.8 -- sh
 
 # List and delete
 lsb checkpoint list
