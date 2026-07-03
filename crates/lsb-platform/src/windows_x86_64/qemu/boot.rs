@@ -551,12 +551,13 @@ fn write_preflight_report(
     artifacts: &QemuBootArtifacts,
     report: &QemuPreflightReport,
 ) -> Result<(), QemuBootError> {
-    let contents = serde_json::to_string_pretty(report).map_err(|err| QemuBootError::ArtifactIo {
-        path: artifacts.preflight.clone(),
-        operation: "serialize QEMU preflight report",
-        detail: err.to_string(),
-        artifacts: Some(artifacts.clone()),
-    })?;
+    let contents =
+        serde_json::to_string_pretty(report).map_err(|err| QemuBootError::ArtifactIo {
+            path: artifacts.preflight.clone(),
+            operation: "serialize QEMU preflight report",
+            detail: err.to_string(),
+            artifacts: Some(artifacts.clone()),
+        })?;
     fs::write(&artifacts.preflight, format!("{contents}\n")).map_err(|err| {
         QemuBootError::ArtifactIo {
             path: artifacts.preflight.clone(),
@@ -576,9 +577,11 @@ fn observe_boot(
     loop {
         match supervisor.try_status() {
             Ok(QemuProcessState::Running | QemuProcessState::Starting) => {}
-            Ok(state @ (QemuProcessState::Exited
-            | QemuProcessState::Failed
-            | QemuProcessState::Terminated)) => {
+            Ok(
+                state @ (QemuProcessState::Exited
+                | QemuProcessState::Failed
+                | QemuProcessState::Terminated),
+            ) => {
                 return Err(QemuBootError::GuestBootExited {
                     state,
                     exit_status: supervisor.exit_status().cloned(),
