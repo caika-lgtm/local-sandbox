@@ -79,6 +79,9 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
   - `cargo test -p lsb-proxy` - pass, 11 tests
   - `cargo check -p lsb-platform -p lsb-vm -p lsb-proxy -p lsb-proto --target x86_64-pc-windows-msvc` - pass
   - `cargo check --workspace --target x86_64-pc-windows-msvc` - blocked on macOS host by external Windows C/assembler tooling for transitive crates (`ring` missing Windows/MSVC headers such as `assert.h`; `blake3` missing `ml64.exe`)
+  - `./scripts/win-gh-test check` - pass, GitHub Actions run `28651692448`
+  - `./scripts/win-gh-test unit` - first run failed, GitHub Actions run `28651764230`, because a Windows-only test used `expect_err` with non-`Debug` handle types
+  - `./scripts/win-gh-test unit` - pass after `066a6c2`, GitHub Actions run `28651905208`
 - Debug artifacts: None.
 - New decisions: None.
 - New risks: None.

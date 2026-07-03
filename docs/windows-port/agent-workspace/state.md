@@ -16,7 +16,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 - Issue: TBD
 - Agent: Codex
 - Start commit: `3501c2b`
-- End commit: `c5e2d96` (M01 handoff docs)
+- End commit: `066a6c2` (validated M01 code)
 
 ## Milestone status table
 
@@ -45,11 +45,11 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - Only the M01 Windows stub backend exists; real QEMU/WHPX discovery, preflight, startup, transport, networking, mounts, and checkpoints are not implemented.
 - Full `cargo check --workspace --target x86_64-pc-windows-msvc` from this macOS host is blocked by external Windows C/assembler tooling for transitive crates (`ring` needs Windows/MSVC headers such as `assert.h`; `blake3` needs `ml64.exe`). Run the full check on a Windows/MSVC runner.
 - QEMU path/version/WHPX availability are not yet detected.
-- Windows hardware workflow exists; physical runner availability has not been verified from this workspace.
 
 ## Recently completed work
 
 - 2026-07-03: Completed M01 compile scaffolding. Added `lsb-platform::windows_x86_64` backend/config/error stubs, removed the `lsb-vm` non-macOS compile rejection, added Windows runtime capability errors, cfg-gated Unix-only proxy/store/CLI paths, and added stub coverage tests.
+- 2026-07-03: Ran Windows hardware workflow through `./scripts/win-gh-test`. `check` passed on run `28651692448`. Initial `unit` run `28651764230` failed because Windows-only stub tests used `expect_err` with non-`Debug` handle types; fixed in `066a6c2`, then `unit` passed on run `28651905208`.
 - 2026-07-03: Added macOS helper for manually dispatching Windows hardware workflow, added Windows smoke/e2e script entrypoints, and documented runner trigger usage.
 
 ## Active implementation notes
@@ -76,6 +76,9 @@ Append newest entries at the top.
 | 2026-07-03 | M01 | macOS | `cargo test -p lsb-proxy` | Pass | 11 proxy/config/DNS tests. |
 | 2026-07-03 | M01 | macOS cross-check | `cargo check -p lsb-platform -p lsb-vm -p lsb-proxy -p lsb-proto --target x86_64-pc-windows-msvc` | Pass | Validates core M01 Windows stubs without external Windows C/asm toolchain. |
 | 2026-07-03 | M01 | macOS cross-check | `cargo check --workspace --target x86_64-pc-windows-msvc` | Blocked | External toolchain limitation on macOS host: `ring` failed on missing Windows/MSVC `assert.h`; `blake3` failed on missing `ml64.exe`. `rustup target add x86_64-pc-windows-msvc` was completed first. |
+| 2026-07-03 | M01 | Windows self-hosted | `./scripts/win-gh-test check` | Pass | Run `28651692448`; pushed branch and ran `windows-lsb-hardware.yml` with `test_set=check`. |
+| 2026-07-03 | M01 | Windows self-hosted | `./scripts/win-gh-test unit` | Pass | Run `28651905208`; rerun after fixing Windows-only stub tests in `066a6c2`. |
+| 2026-07-03 | M01 | Windows self-hosted | `./scripts/win-gh-test unit` | Fail | Run `28651764230`; failed because `expect_err` required `NbdHandle: Debug` in a Windows-only test. Fixed in `066a6c2`. |
 | 2026-07-03 | M15 | macOS | Documentation/script update only | Not run | Hardware workflow not dispatched because changes were not committed/pushed. |
 | 2026-07-02 | Bootstrap | n/a | n/a | n/a | Workspace created. |
 
