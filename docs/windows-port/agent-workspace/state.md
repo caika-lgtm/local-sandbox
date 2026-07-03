@@ -4,7 +4,7 @@ Last updated: 2026-07-03
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
 Current milestone: M01 - Windows compile stubs
-Overall status: Not started
+Overall status: In progress
 
 ## How to update this file
 
@@ -12,17 +12,17 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: TBD
+- Branch: `codex/windows-m01-compile-stubs`
 - Issue: TBD
-- Agent: TBD
-- Start commit: TBD
+- Agent: Codex
+- Start commit: `3501c2b`
 - End commit: TBD
 
 ## Milestone status table
 
 | Milestone | Status | Owner | Branch/PR | Notes |
 |---|---|---|---|---|
-| M01 Windows compile stubs | Not started | TBD | TBD | First milestone. |
+| M01 Windows compile stubs | In progress | Codex | `codex/windows-m01-compile-stubs` | Replacing macOS-only compile gate with Windows stubs. |
 | M02 QEMU discovery and preflight | Blocked by M01 | TBD | TBD | Requires Windows platform module to compile. |
 | M03 QEMU argv builder | Blocked by M02 | TBD | TBD | Requires discovered/preflighted QEMU config shape. |
 | M04 QEMU process lifecycle | Blocked by M03 | TBD | TBD | Requires argv builder. |
@@ -57,6 +57,7 @@ Add short notes here when they affect the next agent. Example:
 
 - `M02` introduced `QemuDiscovery` in `crates/lsb-platform/src/windows_x86_64/qemu.rs`.
 - `M03` golden argv tests live under `crates/lsb-platform/tests/windows_qemu_argv.rs`.
+- 2026-07-03: M01 started on `codex/windows-m01-compile-stubs` from `3501c2b`; scope is compile scaffolding only, with no QEMU discovery/startup or runtime feature implementation.
 
 ## Test evidence log
 
