@@ -1,0 +1,21 @@
+docs/windows-port/agent-workspace/state.md
+  s_3108c4557f28f1::t_6f22ee33e57b0a 7,19,27,45,47,59,68,76-81,107-108
+docs/windows-port/agent-workspace/milestones/03-qemu-argv-builder.md
+  s_3108c4557f28f1::t_6f22ee33e57b0a 3,46-50,74-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3ee3e2eaa1155e952a17ea92c28498e46abe26b1",
+  "prompts": {},
+  "sessions": {
+    "s_3108c4557f28f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2780-ed65-7a83-b64c-6f3d3fd44df2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
