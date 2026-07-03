@@ -11,6 +11,7 @@ pub(crate) mod argv;
 pub(crate) mod config;
 pub(crate) mod discovery;
 pub(crate) mod preflight;
+pub(crate) mod process;
 pub(crate) mod version;
 
 const OUTPUT_EXCERPT_LIMIT: usize = 4096;
