@@ -473,6 +473,27 @@ mod tests {
     }
 
     #[test]
+    fn raw_rootfs_direct_linux_boot_argv_uses_raw_drive_format() {
+        let command = build(QemuBootConfig::direct_linux_boot_raw_rootfs(
+            r"C:\qemu\qemu-system-x86_64.exe",
+            r"C:\lsb\Image",
+            r"C:\lsb\initramfs.cpio.gz",
+            r"C:\lsb\instances\abc\rootfs.ext4",
+            r"C:\lsb\instances\abc\diagnostics\serial.log",
+            2048,
+            2,
+        ));
+
+        assert!(command.argv.contains(&OsString::from(
+            r"if=none,id=root,file=C:\lsb\instances\abc\rootfs.ext4,format=raw"
+        )));
+        assert!(!command
+            .argv
+            .iter()
+            .any(|arg| arg.to_string_lossy().contains("format=qcow2")));
+    }
+
+    #[test]
     fn virtio_serial_control_and_qmp_argv_matches_golden() {
         let mut config = base_config();
         config.control_channel = Some(QemuControlChannelConfig::named_pipe("lsb-abc-control"));

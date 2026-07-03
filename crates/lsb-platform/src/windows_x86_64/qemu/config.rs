@@ -33,11 +33,51 @@ impl QemuBootConfig {
         memory_mib: u64,
         vcpu_count: u16,
     ) -> Self {
+        Self::direct_linux_boot_with_disk(
+            qemu_executable,
+            kernel_image,
+            initrd_image,
+            QemuDiskConfig::qcow2(root_disk),
+            serial_log,
+            memory_mib,
+            vcpu_count,
+        )
+    }
+
+    pub(crate) fn direct_linux_boot_raw_rootfs(
+        qemu_executable: impl Into<PathBuf>,
+        kernel_image: impl Into<PathBuf>,
+        initrd_image: impl Into<PathBuf>,
+        root_disk: impl Into<PathBuf>,
+        serial_log: impl Into<PathBuf>,
+        memory_mib: u64,
+        vcpu_count: u16,
+    ) -> Self {
+        Self::direct_linux_boot_with_disk(
+            qemu_executable,
+            kernel_image,
+            initrd_image,
+            QemuDiskConfig::raw(root_disk),
+            serial_log,
+            memory_mib,
+            vcpu_count,
+        )
+    }
+
+    fn direct_linux_boot_with_disk(
+        qemu_executable: impl Into<PathBuf>,
+        kernel_image: impl Into<PathBuf>,
+        initrd_image: impl Into<PathBuf>,
+        root_disk: QemuDiskConfig,
+        serial_log: impl Into<PathBuf>,
+        memory_mib: u64,
+        vcpu_count: u16,
+    ) -> Self {
         Self {
             qemu_executable: qemu_executable.into(),
             kernel_image: kernel_image.into(),
             initrd_image: initrd_image.into(),
-            root_disk: QemuDiskConfig::qcow2(root_disk),
+            root_disk,
             machine: QemuMachineConfig {
                 memory_mib,
                 vcpu_count,
