@@ -991,8 +991,19 @@ fn empty_as_placeholder(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::ffi::OsString;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use crate::windows_x86_64::qemu::argv::QemuArgvBuilder;
     use crate::windows_x86_64::qemu::config::QemuBootConfig;
+
+    const FAKE_CHILD_ENV: &str = "LSB_QEMU_PROCESS_TEST_CHILD";
+    const FAKE_PID_FILE_ENV: &str = "LSB_QEMU_PROCESS_TEST_PID_FILE";
+    const FAKE_CHILD_TEST_NAME: &str =
+        "windows_x86_64::qemu::process::tests::fake_qemu_child_entrypoint";
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn command() -> QemuCommand {
         QemuArgvBuilder::new(QemuBootConfig::direct_linux_boot(
@@ -1006,6 +1017,117 @@ mod tests {
         ))
         .build()
         .expect("test command should build")
+    }
+
+    fn fake_child_args() -> Vec<OsString> {
+        ["--exact", "--nocapture", FAKE_CHILD_TEST_NAME]
+            .into_iter()
+            .map(OsString::from)
+            .collect()
+    }
+
+    fn fake_command() -> QemuCommand {
+        let executable = env::current_exe().expect("test executable path should be available");
+        let mut command = QemuArgvBuilder::new(QemuBootConfig::direct_linux_boot(
+            executable,
+            "Image",
+            "initramfs.cpio.gz",
+            "root.qcow2",
+            "serial.log",
+            256,
+            1,
+        ))
+        .build()
+        .expect("fake command should build");
+        command.argv = fake_child_args();
+        command
+    }
+
+    fn temp_artifact_dir(label: &str) -> PathBuf {
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        env::temp_dir().join(format!(
+            "lsb-qemu-process-{label}-{}-{counter}",
+            std::process::id()
+        ))
+    }
+
+    fn fake_supervisor(mode: &str, artifact_dir: PathBuf) -> QemuSupervisor {
+        let mut config = QemuSupervisorConfig::new(fake_command(), artifact_dir);
+        config.startup_timeout = Duration::from_millis(100);
+        config.terminate_timeout = Duration::from_secs(2);
+        config.environment.variables.push((
+            OsString::from(FAKE_CHILD_ENV),
+            OsString::from(mode.to_string()),
+        ));
+        QemuSupervisor::new(config)
+    }
+
+    fn wait_for_file_contains(path: &PathBuf, needle: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(contents) = fs::read_to_string(path) {
+                if contents.contains(needle) {
+                    return contents;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for '{}' to contain '{needle}'",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn wait_for_pid_file(path: &PathBuf) -> u32 {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(contents) = fs::read_to_string(path) {
+                if let Ok(pid) = contents.trim().parse::<u32>() {
+                    return pid;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for pid file '{}'",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn fake_qemu_child_entrypoint() {
+        let Ok(mode) = env::var(FAKE_CHILD_ENV) else {
+            return;
+        };
+
+        match mode.as_str() {
+            "log" => {
+                println!("fake qemu stdout ready");
+                eprintln!("fake qemu stderr ready");
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
+                std::thread::sleep(Duration::from_secs(60));
+            }
+            "exit-whpx" => {
+                eprintln!("WHPX runtime initialization failed in fake QEMU");
+                let _ = std::io::stderr().flush();
+                std::process::exit(17);
+            }
+            "spawn-grandchild" => {
+                let pid_file = env::var(FAKE_PID_FILE_ENV).expect("pid file env should be set");
+                let mut child = Command::new(env::current_exe().expect("current exe"))
+                    .args(fake_child_args())
+                    .env(FAKE_CHILD_ENV, "log")
+                    .spawn()
+                    .expect("fake grandchild should start");
+                fs::write(pid_file, child.id().to_string()).expect("pid file should be writable");
+                std::thread::sleep(Duration::from_secs(60));
+                let _ = child.wait();
+            }
+            other => panic!("unknown fake child mode: {other}"),
+        }
     }
 
     #[test]
@@ -1039,5 +1161,161 @@ mod tests {
             supervisor.artifacts().argv,
             PathBuf::from("artifacts").join("qemu.argv.redacted.txt")
         );
+    }
+
+    #[test]
+    fn fake_process_start_timeout_terminate_and_artifacts_work() {
+        let artifact_dir = temp_artifact_dir("log");
+        let mut supervisor = fake_supervisor("log", artifact_dir.clone());
+
+        supervisor.start().expect("fake process should start");
+
+        assert_eq!(supervisor.state(), QemuProcessState::Running);
+        assert!(supervisor.pid().is_some());
+        assert_eq!(
+            supervisor
+                .wait(Duration::from_millis(20))
+                .expect_err("running fake should time out")
+                .kind(),
+            QemuProcessErrorKind::WaitTimeout
+        );
+
+        let stdout = wait_for_file_contains(&supervisor.artifacts().stdout, "fake qemu stdout");
+        let stderr = wait_for_file_contains(&supervisor.artifacts().stderr, "fake qemu stderr");
+        assert!(stdout.contains("fake qemu stdout ready"));
+        assert!(stderr.contains("fake qemu stderr ready"));
+
+        let exit = supervisor
+            .terminate()
+            .expect("terminate should succeed")
+            .expect("terminate should return an exit status");
+        assert!(!exit.success);
+        assert_eq!(supervisor.state(), QemuProcessState::Terminated);
+        assert!(supervisor
+            .kill()
+            .expect("second kill should be idempotent")
+            .is_some());
+
+        let argv = fs::read_to_string(&supervisor.artifacts().argv).expect("argv artifact");
+        assert!(argv.contains("<qemu-system-x86_64.exe>"));
+        assert!(!argv.contains(FAKE_CHILD_ENV));
+
+        let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
+        assert!(status.contains("\"state\": \"terminated\""));
+        assert!(status.contains("\"stdout\": \"qemu.stdout.log\""));
+        assert!(status.contains("\"override_count\": 1"));
+        assert!(!status.contains(FAKE_CHILD_ENV));
+        assert!(!status.contains("fake qemu stderr ready"));
+
+        let diagnostics = supervisor.diagnostics();
+        assert_eq!(diagnostics.state, QemuProcessState::Terminated);
+        assert!(diagnostics
+            .redacted_command
+            .contains("<qemu-system-x86_64.exe>"));
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn fake_process_early_whpx_exit_reports_structured_error() {
+        let artifact_dir = temp_artifact_dir("early-exit");
+        let mut supervisor = fake_supervisor("exit-whpx", artifact_dir.clone());
+        supervisor.config.startup_timeout = Duration::from_secs(2);
+
+        let err = supervisor
+            .start()
+            .expect_err("fake WHPX startup failure should be reported");
+
+        assert_eq!(err.kind(), QemuProcessErrorKind::WhpxPreflightMismatch);
+        assert!(err.to_string().contains("WHPX"));
+        assert_eq!(supervisor.state(), QemuProcessState::Failed);
+        assert_eq!(
+            supervisor.exit_status().expect("exit status").code,
+            Some(17)
+        );
+
+        let stderr = fs::read_to_string(&supervisor.artifacts().stderr).expect("stderr artifact");
+        assert!(stderr.contains("WHPX runtime initialization failed"));
+        let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
+        assert!(status.contains("\"state\": \"failed\""));
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn invalid_relative_executable_is_rejected_before_spawn() {
+        let artifact_dir = temp_artifact_dir("relative-exe");
+        let mut command = fake_command();
+        command.program = PathBuf::from("qemu-system-x86_64.exe");
+        let mut supervisor = QemuSupervisor::new(QemuSupervisorConfig::new(command, artifact_dir));
+
+        let err = supervisor
+            .start()
+            .expect_err("relative executable should fail before spawn");
+
+        assert_eq!(err.kind(), QemuProcessErrorKind::InvalidCommand);
+        assert!(err.to_string().contains("must be absolute"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_job_object_drop_terminates_fake_child_tree() {
+        let artifact_dir = temp_artifact_dir("job-object");
+        let pid_file = artifact_dir.join("grandchild.pid");
+        let mut config = QemuSupervisorConfig::new(fake_command(), artifact_dir.clone());
+        config.startup_timeout = Duration::from_millis(250);
+        config.terminate_timeout = Duration::from_secs(3);
+        config.environment.variables.push((
+            OsString::from(FAKE_CHILD_ENV),
+            OsString::from("spawn-grandchild"),
+        ));
+        config.environment.variables.push((
+            OsString::from(FAKE_PID_FILE_ENV),
+            pid_file.as_os_str().to_owned(),
+        ));
+
+        let mut supervisor = QemuSupervisor::new(config);
+        if let Err(err) = supervisor.start() {
+            if err.kind() == QemuProcessErrorKind::ProcessAlreadyInJob {
+                eprintln!("skipping Job Object child-tree test: {err}");
+                return;
+            }
+            panic!("fake process should start under Job Object: {err}");
+        }
+
+        let grandchild_pid = wait_for_pid_file(&pid_file);
+        drop(supervisor);
+
+        assert!(
+            wait_for_windows_process_exit(grandchild_pid, Duration::from_secs(5)),
+            "grandchild process {grandchild_pid} should exit when the Job Object is dropped"
+        );
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn wait_for_windows_process_exit(pid: u32, timeout: Duration) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+        };
+
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            )
+        };
+        if handle.is_null() {
+            return true;
+        }
+
+        let wait_ms = timeout.as_millis().min(u128::from(u32::MAX)) as u32;
+        let result = unsafe { WaitForSingleObject(handle, wait_ms) };
+        let _ = unsafe { CloseHandle(handle) };
+        result == WAIT_OBJECT_0
     }
 }
