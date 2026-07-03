@@ -149,6 +149,23 @@ pub(crate) enum QemuProcessError {
         path: PathBuf,
         detail: String,
     },
+    JobObjectCreateFailed {
+        detail: String,
+    },
+    JobObjectConfigureFailed {
+        detail: String,
+    },
+    JobObjectAssignFailed {
+        pid: u32,
+        detail: String,
+    },
+    ProcessAlreadyInJob {
+        pid: u32,
+        detail: String,
+    },
+    JobObjectTerminateFailed {
+        detail: String,
+    },
     WhpxPreflightMismatch {
         status: QemuExitStatus,
         stderr_path: PathBuf,
@@ -191,6 +208,21 @@ impl QemuProcessError {
             }
             Self::SpawnFailed { .. } => {
                 "Verify QEMU preflight still passes and the selected executable can be launched by this user."
+            }
+            Self::JobObjectCreateFailed { .. } => {
+                "Check Windows process-management policy and retry on a Windows 11 host that allows Job Object creation."
+            }
+            Self::JobObjectConfigureFailed { .. } => {
+                "Check Windows process-management policy; LocalSandbox requires JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE for QEMU cleanup."
+            }
+            Self::JobObjectAssignFailed { .. } => {
+                "Check whether host policy prevents assigning QEMU to a Job Object; LocalSandbox fails closed to avoid orphaned QEMU helper processes."
+            }
+            Self::ProcessAlreadyInJob { .. } => {
+                "Run LocalSandbox outside the conflicting parent Job Object or configure the runner to allow nested/breakaway jobs; this milestone fails closed when containment cannot be guaranteed."
+            }
+            Self::JobObjectTerminateFailed { .. } => {
+                "Check whether QEMU already exited or whether host policy blocked Job Object termination, then inspect the process id and diagnostics."
             }
             Self::WhpxPreflightMismatch { .. } => {
                 "Rerun QEMU preflight and confirm Windows Hypervisor Platform is enabled; M02 preflight can report WHPX support in the binary before runtime WHPX initialization is proven."
@@ -259,6 +291,31 @@ impl fmt::Display for QemuProcessError {
                 path.display(),
                 self.remediation()
             ),
+            Self::JobObjectCreateFailed { detail } => write!(
+                f,
+                "failed to create Windows Job Object for QEMU cleanup: {detail}. {}",
+                self.remediation()
+            ),
+            Self::JobObjectConfigureFailed { detail } => write!(
+                f,
+                "failed to configure Windows Job Object cleanup limits: {detail}. {}",
+                self.remediation()
+            ),
+            Self::JobObjectAssignFailed { pid, detail } => write!(
+                f,
+                "failed to assign QEMU process {pid} to the cleanup Job Object: {detail}. {}",
+                self.remediation()
+            ),
+            Self::ProcessAlreadyInJob { pid, detail } => write!(
+                f,
+                "QEMU process {pid} is already in a Windows Job Object and cannot be assigned to the LocalSandbox cleanup Job Object: {detail}. {}",
+                self.remediation()
+            ),
+            Self::JobObjectTerminateFailed { detail } => write!(
+                f,
+                "failed to terminate the QEMU cleanup Job Object: {detail}. {}",
+                self.remediation()
+            ),
             Self::WhpxPreflightMismatch {
                 status,
                 stderr_path,
@@ -305,6 +362,7 @@ pub(crate) struct QemuSupervisor {
     child: Option<Child>,
     pid: Option<u32>,
     exit_status: Option<QemuExitStatus>,
+    containment: ProcessContainment,
 }
 
 impl QemuSupervisor {
@@ -315,6 +373,7 @@ impl QemuSupervisor {
             child: None,
             pid: None,
             exit_status: None,
+            containment: ProcessContainment::default(),
         }
     }
 
@@ -364,11 +423,22 @@ impl QemuSupervisor {
             .stderr(Stdio::from(stderr));
         apply_environment(&mut command, &self.config.environment);
 
-        let child = command.spawn().map_err(|err| {
+        let mut child = command.spawn().map_err(|err| {
             self.state = QemuProcessState::Failed;
             spawn_error(&self.config.command.program, err)
         })?;
-        self.pid = Some(child.id());
+        let pid = child.id();
+        self.pid = Some(pid);
+
+        self.containment = match ProcessContainment::create_for_child(&child) {
+            Ok(containment) => containment,
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                self.state = QemuProcessState::Failed;
+                return Err(err);
+            }
+        };
         self.child = Some(child);
 
         if let Some(status) = self.wait_for_startup_exit()? {
@@ -533,6 +603,9 @@ impl QemuSupervisor {
     }
 
     fn kill_child(&mut self, operation: &'static str) -> Result<(), QemuProcessError> {
+        if self.containment.terminate()? {
+            return Ok(());
+        }
         let Some(child) = self.child.as_mut() else {
             return Ok(());
         };
@@ -542,6 +615,150 @@ impl QemuSupervisor {
         })
     }
 }
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct ProcessContainment {
+    job: Option<JobObject>,
+}
+
+#[cfg(target_os = "windows")]
+impl Default for ProcessContainment {
+    fn default() -> Self {
+        Self { job: None }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl ProcessContainment {
+    fn create_for_child(child: &Child) -> Result<Self, QemuProcessError> {
+        let job = JobObject::create_kill_on_close()?;
+        job.assign_child(child)?;
+        Ok(Self { job: Some(job) })
+    }
+
+    fn terminate(&self) -> Result<bool, QemuProcessError> {
+        if let Some(job) = &self.job {
+            job.terminate()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Default)]
+struct ProcessContainment;
+
+#[cfg(not(target_os = "windows"))]
+impl ProcessContainment {
+    fn create_for_child(_child: &Child) -> Result<Self, QemuProcessError> {
+        Ok(Self)
+    }
+
+    fn terminate(&self) -> Result<bool, QemuProcessError> {
+        Ok(false)
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct JobObject {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(target_os = "windows")]
+impl JobObject {
+    fn create_kill_on_close() -> Result<Self, QemuProcessError> {
+        use std::mem::size_of;
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(QemuProcessError::JobObjectCreateFailed {
+                detail: io::Error::last_os_error().to_string(),
+            });
+        }
+
+        let job = Self { handle };
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = unsafe {
+            SetInformationJobObject(
+                job.handle,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const core::ffi::c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(QemuProcessError::JobObjectConfigureFailed {
+                detail: io::Error::last_os_error().to_string(),
+            });
+        }
+
+        Ok(job)
+    }
+
+    fn assign_child(&self, child: &Child) -> Result<(), QemuProcessError> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, IsProcessInJob};
+
+        let process_handle = child.as_raw_handle() as HANDLE;
+        let ok = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
+        if ok != 0 {
+            return Ok(());
+        }
+
+        let detail = io::Error::last_os_error().to_string();
+        let mut in_job = 0;
+        let check_ok = unsafe { IsProcessInJob(process_handle, std::ptr::null_mut(), &mut in_job) };
+        if check_ok != 0 && in_job != 0 {
+            Err(QemuProcessError::ProcessAlreadyInJob {
+                pid: child.id(),
+                detail,
+            })
+        } else {
+            Err(QemuProcessError::JobObjectAssignFailed {
+                pid: child.id(),
+                detail,
+            })
+        }
+    }
+
+    fn terminate(&self) -> Result<(), QemuProcessError> {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        let ok = unsafe { TerminateJobObject(self.handle, 1) };
+        if ok == 0 {
+            Err(QemuProcessError::JobObjectTerminateFailed {
+                detail: io::Error::last_os_error().to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for JobObject {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        let _ = unsafe { CloseHandle(self.handle) };
+    }
+}
+
+#[cfg(target_os = "windows")]
+// SAFETY: `JobObject` owns a kernel HANDLE, uses it only through thread-safe
+// Windows process-management calls, and closes it exactly once in `Drop`.
+unsafe impl Send for JobObject {}
 
 impl Drop for QemuSupervisor {
     fn drop(&mut self) {

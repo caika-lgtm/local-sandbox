@@ -1,4 +1,8 @@
-#![cfg_attr(not(target_os = "macos"), forbid(unsafe_code))]
+#![cfg_attr(
+    not(any(target_os = "macos", target_os = "windows")),
+    forbid(unsafe_code)
+)]
+#![cfg_attr(target_os = "windows", deny(unsafe_op_in_unsafe_fn))]
 
 use std::env;
 use std::net::TcpStream;
