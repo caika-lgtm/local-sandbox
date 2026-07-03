@@ -16,7 +16,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 - Issue: TBD
 - Agent: Codex
 - Start commit: `3501c2b`
-- End commit: TBD (final docs commit)
+- End commit: `c5e2d96` (M01 handoff docs)
 
 ## Milestone status table
 
