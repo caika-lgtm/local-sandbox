@@ -1,0 +1,36 @@
+scripts/windows-smoke.ps1
+  s_fdd1d24765c027::t_12f156da2aea80 1-12
+scripts/win-gh-test
+  s_fdd1d24765c027::t_12f156da2aea80 1-79
+AGENTS.md
+  s_fdd1d24765c027::t_12f156da2aea80 27-34
+docs/windows-port/AGENTS.md
+  s_fdd1d24765c027::t_12f156da2aea80 26-34
+docs/windows-port/agent-workspace/runner-setup.md
+  s_fdd1d24765c027::t_e643994269441d 75
+  s_fdd1d24765c027::t_12f156da2aea80 3,5,7,10,13,26,57-74,76-83,88
+.github/workflows/windows-lsb-hardware.yml
+  s_fdd1d24765c027::t_12f156da2aea80 110,115
+docs/windows-port/agent-workspace/state.md
+  s_fdd1d24765c027::t_12f156da2aea80 3,48,52,67,75
+scripts/windows-e2e.ps1
+  s_fdd1d24765c027::t_12f156da2aea80 1-16
+docs/windows-port/agent-workspace/validation.md
+  s_fdd1d24765c027::t_12f156da2aea80 27,30,41-47,86-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3501c2bfcd2c27389138b297aaac8a18d56078d0",
+  "prompts": {},
+  "sessions": {
+    "s_fdd1d24765c027": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f26bf-e4ca-7ef1-b821-9baff30d7c9f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "kaian <caika@sea.com>"
+    }
+  }
+}
