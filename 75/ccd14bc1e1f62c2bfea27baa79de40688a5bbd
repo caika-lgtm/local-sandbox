@@ -1,0 +1,19 @@
+docs/windows-port/agent-workspace/state.md
+  s_d2c60d9a2d8d32::t_b127ba69b71aa2 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "75ccd14bc1e1f62c2bfea27baa79de40688a5bbd",
+  "prompts": {},
+  "sessions": {
+    "s_d2c60d9a2d8d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f273d-5fce-7860-ad60-0b36e56efba6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
