@@ -125,6 +125,37 @@ impl fmt::Display for QemuExitStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QemuProcessDiagnostics {
+    pub state: QemuProcessState,
+    pub pid: Option<u32>,
+    pub exit_status: Option<QemuExitStatus>,
+    pub artifacts: QemuProcessArtifacts,
+    pub redacted_command: String,
+    pub diagnostic_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum QemuProcessErrorKind {
+    AlreadyStarted,
+    NotStarted,
+    InvalidCommand,
+    MissingExecutable,
+    PermissionDenied,
+    ArtifactIo,
+    SpawnFailed,
+    JobObjectCreateFailed,
+    JobObjectConfigureFailed,
+    JobObjectAssignFailed,
+    ProcessAlreadyInJob,
+    JobObjectTerminateFailed,
+    WhpxPreflightMismatch,
+    EarlyExit,
+    WaitTimeout,
+    CleanupFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum QemuProcessError {
     AlreadyStarted {
         state: QemuProcessState,
@@ -188,6 +219,27 @@ pub(crate) enum QemuProcessError {
 }
 
 impl QemuProcessError {
+    pub(crate) fn kind(&self) -> QemuProcessErrorKind {
+        match self {
+            Self::AlreadyStarted { .. } => QemuProcessErrorKind::AlreadyStarted,
+            Self::NotStarted => QemuProcessErrorKind::NotStarted,
+            Self::InvalidCommand { .. } => QemuProcessErrorKind::InvalidCommand,
+            Self::MissingExecutable { .. } => QemuProcessErrorKind::MissingExecutable,
+            Self::PermissionDenied { .. } => QemuProcessErrorKind::PermissionDenied,
+            Self::ArtifactIo { .. } => QemuProcessErrorKind::ArtifactIo,
+            Self::SpawnFailed { .. } => QemuProcessErrorKind::SpawnFailed,
+            Self::JobObjectCreateFailed { .. } => QemuProcessErrorKind::JobObjectCreateFailed,
+            Self::JobObjectConfigureFailed { .. } => QemuProcessErrorKind::JobObjectConfigureFailed,
+            Self::JobObjectAssignFailed { .. } => QemuProcessErrorKind::JobObjectAssignFailed,
+            Self::ProcessAlreadyInJob { .. } => QemuProcessErrorKind::ProcessAlreadyInJob,
+            Self::JobObjectTerminateFailed { .. } => QemuProcessErrorKind::JobObjectTerminateFailed,
+            Self::WhpxPreflightMismatch { .. } => QemuProcessErrorKind::WhpxPreflightMismatch,
+            Self::EarlyExit { .. } => QemuProcessErrorKind::EarlyExit,
+            Self::WaitTimeout { .. } => QemuProcessErrorKind::WaitTimeout,
+            Self::CleanupFailed { .. } => QemuProcessErrorKind::CleanupFailed,
+        }
+    }
+
     pub(crate) fn remediation(&self) -> &'static str {
         match self {
             Self::AlreadyStarted { .. } => {
@@ -393,6 +445,21 @@ impl QemuSupervisor {
 
     pub(crate) fn exit_status(&self) -> Option<&QemuExitStatus> {
         self.exit_status.as_ref()
+    }
+
+    pub(crate) fn diagnostics(&self) -> QemuProcessDiagnostics {
+        QemuProcessDiagnostics {
+            state: self.state,
+            pid: self.pid,
+            exit_status: self.exit_status.clone(),
+            artifacts: self.config.artifacts.clone(),
+            redacted_command: self.config.command.sanitized_display(),
+            diagnostic_label: self
+                .config
+                .command
+                .diagnostic_label()
+                .map(ToOwned::to_owned),
+        }
     }
 
     pub(crate) fn start(&mut self) -> Result<(), QemuProcessError> {
