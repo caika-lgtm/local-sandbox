@@ -1,3 +1,5 @@
+#![allow(dead_code)] // M02 scaffolding is wired into VM startup in later milestones.
+
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
