@@ -276,3 +276,540 @@ fn empty_as_placeholder(value: &str) -> &str {
         value
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+    use std::ffi::OsString;
+
+    use super::discovery::{
+        QemuDiscovery, QemuDiscoveryHost, QemuPathSource, StdQemuDiscoveryHost, LSB_QEMU_ENV,
+    };
+    use super::preflight::{QemuPreflight, PRODUCTION_ACCELERATOR};
+    use super::version::{probe_qemu_version, QemuVersion};
+    use super::{
+        QemuCommandOutput, QemuCommandRunError, QemuCommandRunner, QemuCommandStatus,
+        QemuPreflightError, StdQemuCommandRunner,
+    };
+    use std::path::{Path, PathBuf};
+
+    #[derive(Debug, Clone)]
+    struct FakeHost {
+        env: HashMap<String, OsString>,
+        path_entries: Vec<PathBuf>,
+        files: HashSet<PathBuf>,
+        os: String,
+        arch: String,
+        windows_major_version: Option<u32>,
+    }
+
+    impl FakeHost {
+        fn windows() -> Self {
+            Self {
+                env: HashMap::new(),
+                path_entries: Vec::new(),
+                files: HashSet::new(),
+                os: "windows".to_string(),
+                arch: "x86_64".to_string(),
+                windows_major_version: Some(11),
+            }
+        }
+
+        fn with_env(mut self, name: &str, value: impl Into<OsString>) -> Self {
+            self.env.insert(name.to_string(), value.into());
+            self
+        }
+
+        fn with_path_entry(mut self, path: impl Into<PathBuf>) -> Self {
+            self.path_entries.push(path.into());
+            self
+        }
+
+        fn with_file(mut self, path: impl Into<PathBuf>) -> Self {
+            self.files.insert(path.into());
+            self
+        }
+
+        fn with_os(mut self, os: &str) -> Self {
+            self.os = os.to_string();
+            self
+        }
+
+        fn with_arch(mut self, arch: &str) -> Self {
+            self.arch = arch.to_string();
+            self
+        }
+
+        fn with_windows_major_version(mut self, version: Option<u32>) -> Self {
+            self.windows_major_version = version;
+            self
+        }
+    }
+
+    impl QemuDiscoveryHost for FakeHost {
+        fn env_var(&self, name: &str) -> Option<OsString> {
+            self.env.get(name).cloned()
+        }
+
+        fn path_entries(&self) -> Vec<PathBuf> {
+            self.path_entries.clone()
+        }
+
+        fn is_file(&self, path: &Path) -> bool {
+            self.files.contains(path)
+        }
+
+        fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
+            Some(path.to_path_buf())
+        }
+
+        fn host_os(&self) -> String {
+            self.os.clone()
+        }
+
+        fn host_arch(&self) -> String {
+            self.arch.clone()
+        }
+
+        fn windows_major_version(&self) -> Option<u32> {
+            self.windows_major_version
+        }
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct FakeRunner {
+        responses: HashMap<(PathBuf, Vec<String>), Result<QemuCommandOutput, QemuCommandRunError>>,
+    }
+
+    impl FakeRunner {
+        fn with_success(
+            mut self,
+            program: &Path,
+            args: &[&str],
+            stdout: impl Into<Vec<u8>>,
+        ) -> Self {
+            self.responses.insert(
+                key(program, args),
+                Ok(QemuCommandOutput {
+                    status: QemuCommandStatus {
+                        success: true,
+                        code: Some(0),
+                    },
+                    stdout: stdout.into(),
+                    stderr: Vec::new(),
+                }),
+            );
+            self
+        }
+
+        fn with_failure(
+            mut self,
+            program: &Path,
+            args: &[&str],
+            code: i32,
+            stderr: impl Into<Vec<u8>>,
+        ) -> Self {
+            self.responses.insert(
+                key(program, args),
+                Ok(QemuCommandOutput {
+                    status: QemuCommandStatus {
+                        success: false,
+                        code: Some(code),
+                    },
+                    stdout: Vec::new(),
+                    stderr: stderr.into(),
+                }),
+            );
+            self
+        }
+
+        fn with_run_error(
+            mut self,
+            program: &Path,
+            args: &[&str],
+            kind: std::io::ErrorKind,
+            message: &str,
+        ) -> Self {
+            self.responses.insert(
+                key(program, args),
+                Err(QemuCommandRunError {
+                    kind,
+                    message: message.to_string(),
+                }),
+            );
+            self
+        }
+    }
+
+    impl QemuCommandRunner for FakeRunner {
+        fn run(
+            &self,
+            program: &Path,
+            args: &[&str],
+        ) -> Result<QemuCommandOutput, QemuCommandRunError> {
+            self.responses
+                .get(&key(program, args))
+                .cloned()
+                .unwrap_or_else(|| {
+                    Err(QemuCommandRunError {
+                        kind: std::io::ErrorKind::NotFound,
+                        message: format!(
+                            "missing fake response for {} {:?}",
+                            program.display(),
+                            args
+                        ),
+                    })
+                })
+        }
+    }
+
+    fn key(program: &Path, args: &[&str]) -> (PathBuf, Vec<String>) {
+        (
+            program.to_path_buf(),
+            args.iter().map(|arg| (*arg).to_string()).collect(),
+        )
+    }
+
+    fn qemu_path() -> PathBuf {
+        PathBuf::from("/qemu/bin/qemu-system-x86_64.exe")
+    }
+
+    fn qemu_dir() -> PathBuf {
+        PathBuf::from("/qemu/bin")
+    }
+
+    fn working_host() -> FakeHost {
+        FakeHost::windows()
+            .with_path_entry(qemu_dir())
+            .with_file(qemu_path())
+    }
+
+    fn working_runner(path: &Path) -> FakeRunner {
+        FakeRunner::default()
+            .with_success(
+                path,
+                &["--version"],
+                "QEMU emulator version 8.2.1 (v8.2.1)\r\nCopyright...",
+            )
+            .with_success(
+                path,
+                &["--help"],
+                "QEMU emulator version 8.2.1\r\nusage: qemu-system-x86_64 [options]\r\n",
+            )
+            .with_success(
+                path,
+                &["-accel", "help"],
+                "Accelerators supported in QEMU binary:\r\nwhpx\r\ntcg\r\n",
+            )
+    }
+
+    #[test]
+    fn discovery_prefers_lsb_qemu_over_config_and_path() {
+        let env_path = PathBuf::from("/env/qemu-system-x86_64.exe");
+        let config_path = PathBuf::from("/config/qemu-system-x86_64.exe");
+        let path_path = qemu_path();
+        let host = FakeHost::windows()
+            .with_env(LSB_QEMU_ENV, env_path.as_os_str().to_owned())
+            .with_path_entry(qemu_dir())
+            .with_file(env_path.clone())
+            .with_file(config_path.clone())
+            .with_file(path_path);
+
+        let qemu = QemuDiscovery::new(&host)
+            .with_configured_qemu(config_path)
+            .discover()
+            .expect("env path should win");
+
+        assert_eq!(qemu.source, QemuPathSource::Env);
+        assert_eq!(qemu.path, env_path);
+    }
+
+    #[test]
+    fn discovery_uses_config_before_path_when_env_absent() {
+        let config_path = PathBuf::from("/config/qemu-system-x86_64.exe");
+        let host = working_host().with_file(config_path.clone());
+
+        let qemu = QemuDiscovery::new(&host)
+            .with_configured_qemu(config_path.clone())
+            .discover()
+            .expect("config path should win over PATH");
+
+        assert_eq!(qemu.source, QemuPathSource::Config);
+        assert_eq!(qemu.path, config_path);
+    }
+
+    #[test]
+    fn discovery_finds_qemu_on_path_with_spaces() {
+        let qemu_dir = PathBuf::from("/Program Files/QEMU");
+        let qemu_path = qemu_dir.join("qemu-system-x86_64.exe");
+        let host = FakeHost::windows()
+            .with_path_entry(qemu_dir)
+            .with_file(qemu_path.clone());
+
+        let qemu = QemuDiscovery::new(&host)
+            .discover()
+            .expect("PATH candidate should be discovered");
+
+        assert_eq!(qemu.source, QemuPathSource::Path);
+        assert_eq!(qemu.path, qemu_path);
+    }
+
+    #[test]
+    fn invalid_lsb_qemu_path_reports_env_error() {
+        let bad_path = PathBuf::from("/missing/qemu-system-x86_64.exe");
+        let host = FakeHost::windows().with_env(LSB_QEMU_ENV, bad_path.as_os_str().to_owned());
+
+        let err = QemuDiscovery::new(&host)
+            .discover()
+            .expect_err("invalid env path should fail before PATH");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::EnvQemuPathInvalid { ref path, .. } if *path == bad_path
+        ));
+        assert!(err.to_string().contains("Set LSB_QEMU"));
+    }
+
+    #[test]
+    fn missing_qemu_reports_path_entry_count_without_dumping_path() {
+        let host = FakeHost::windows()
+            .with_path_entry("/a")
+            .with_path_entry("/b");
+
+        let err = QemuDiscovery::new(&host)
+            .discover()
+            .expect_err("missing qemu should fail");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::QemuNotFound {
+                searched_path_entries: 2
+            }
+        ));
+        assert!(!err.to_string().contains("/a"));
+        assert!(!err.to_string().contains("/b"));
+    }
+
+    #[test]
+    fn qemu_version_parser_accepts_standard_version_output() {
+        let version = QemuVersion::parse(b"QEMU emulator version 9.1.0 (v9.1.0)\r\nCopyright...")
+            .expect("version should parse");
+
+        assert_eq!(version.major, 9);
+        assert_eq!(version.minor, 1);
+        assert_eq!(version.patch, Some(0));
+        assert_eq!(version.raw, "QEMU emulator version 9.1.0 (v9.1.0)");
+    }
+
+    #[test]
+    fn qemu_version_parser_handles_non_utf8_output_defensively() {
+        let mut output = b"qemu-system-x86_64 version 8.2.0".to_vec();
+        output.push(0xff);
+
+        let version = QemuVersion::parse(&output).expect("version should parse despite suffix");
+
+        assert_eq!(version.major, 8);
+        assert_eq!(version.minor, 2);
+        assert_eq!(version.patch, Some(0));
+    }
+
+    #[test]
+    fn version_probe_reports_unparseable_output() {
+        let path = qemu_path();
+        let runner =
+            FakeRunner::default().with_success(&path, &["--version"], "not a qemu version");
+
+        let err = probe_qemu_version(&runner, &path).expect_err("version parse should fail");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::VersionOutputUnparseable { .. }
+        ));
+        assert!(err.to_string().contains("Install a standard QEMU"));
+    }
+
+    #[test]
+    fn version_probe_reports_command_execution_failure() {
+        let path = qemu_path();
+        let runner = FakeRunner::default().with_run_error(
+            &path,
+            &["--version"],
+            std::io::ErrorKind::PermissionDenied,
+            "access denied",
+        );
+
+        let err = probe_qemu_version(&runner, &path).expect_err("execution should fail");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::QemuCannotExecute { probe, .. }
+                if probe == "qemu-system-x86_64.exe --version"
+        ));
+        assert!(err.to_string().contains("could not run"));
+    }
+
+    #[test]
+    fn preflight_returns_structured_report_when_whpx_is_reported() {
+        let path = qemu_path();
+        let host = working_host();
+        let runner = working_runner(&path);
+
+        let report = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect("preflight should pass");
+
+        assert_eq!(report.qemu.path, path);
+        assert_eq!(report.version.major, 8);
+        assert_eq!(report.version.minor, 2);
+        assert_eq!(report.version.patch, Some(1));
+        assert_eq!(report.whpx.required_accelerator, PRODUCTION_ACCELERATOR);
+        assert!(report.whpx.reported_by_qemu);
+        assert!(report.whpx.limitation.contains("does not start a VM"));
+    }
+
+    #[test]
+    fn preflight_allows_unknown_windows_version_but_marks_it_unverified() {
+        let path = qemu_path();
+        let host = working_host().with_windows_major_version(None);
+        let runner = working_runner(&path);
+
+        let report = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect("unknown Windows version is reported, not fatal in M02");
+
+        assert_eq!(report.host.windows_major_version, None);
+        assert!(!report.host.windows_version_verified);
+    }
+
+    #[test]
+    fn preflight_rejects_non_windows_hosts() {
+        let host = working_host().with_os("macos");
+        let runner = working_runner(&qemu_path());
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("non-Windows host should fail");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::UnsupportedHostOs { ref actual } if actual == "macos"
+        ));
+        assert!(err.to_string().contains("Windows 11 x86_64"));
+    }
+
+    #[test]
+    fn preflight_rejects_non_x86_64_architecture() {
+        let host = working_host().with_arch("aarch64");
+        let runner = working_runner(&qemu_path());
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("non-x86_64 host should fail");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::UnsupportedArchitecture { actual } if actual == "aarch64"
+        ));
+    }
+
+    #[test]
+    fn preflight_rejects_pre_windows_11_when_version_is_known() {
+        let host = working_host().with_windows_major_version(Some(10));
+        let runner = working_runner(&qemu_path());
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("Windows 10 should fail when known");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::UnsupportedWindowsVersion { major: 10 }
+        ));
+        assert!(err.to_string().contains("Upgrade to Windows 11"));
+    }
+
+    #[test]
+    fn preflight_rejects_unsuitable_binary() {
+        let path = PathBuf::from("/qemu/bin/qemu-img.exe");
+        let host = FakeHost::windows()
+            .with_env(LSB_QEMU_ENV, path.as_os_str().to_owned())
+            .with_file(path.clone());
+        let runner = FakeRunner::default()
+            .with_success(&path, &["--version"], "qemu-img version 8.2.1")
+            .with_success(&path, &["--help"], "usage: qemu-img [standard options]");
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("qemu-img should not pass system emulator preflight");
+
+        assert!(matches!(
+            err,
+            QemuPreflightError::UnsuitableQemuBinary { .. }
+        ));
+        assert!(err.to_string().contains("x86_64 system emulation"));
+    }
+
+    #[test]
+    fn preflight_rejects_qemu_without_whpx_accelerator() {
+        let path = qemu_path();
+        let host = working_host();
+        let runner = FakeRunner::default()
+            .with_success(&path, &["--version"], "QEMU emulator version 8.2.1")
+            .with_success(
+                &path,
+                &["--help"],
+                "usage: qemu-system-x86_64 [options]\r\n",
+            )
+            .with_success(
+                &path,
+                &["-accel", "help"],
+                "Accelerators supported in QEMU binary:\r\ntcg\r\n",
+            );
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("missing WHPX should fail");
+
+        assert!(matches!(err, QemuPreflightError::WhpxUnavailable { .. }));
+        assert!(err
+            .to_string()
+            .contains("enable Windows Hypervisor Platform"));
+    }
+
+    #[test]
+    fn preflight_reports_nonzero_accelerator_probe_as_whpx_unavailable() {
+        let path = qemu_path();
+        let host = working_host();
+        let runner = FakeRunner::default()
+            .with_success(&path, &["--version"], "QEMU emulator version 8.2.1")
+            .with_success(
+                &path,
+                &["--help"],
+                "usage: qemu-system-x86_64 [options]\r\n",
+            )
+            .with_failure(&path, &["-accel", "help"], 1, "unknown option");
+
+        let err = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect_err("accelerator help failure should be actionable");
+
+        assert!(matches!(err, QemuPreflightError::WhpxUnavailable { .. }));
+    }
+
+    #[test]
+    #[ignore = "requires Windows 11 x86_64 with QEMU installed; set LSB_TEST_REAL_QEMU=1"]
+    fn real_qemu_preflight_when_explicitly_enabled() {
+        if std::env::var("LSB_TEST_REAL_QEMU").ok().as_deref() != Some("1") {
+            eprintln!("skipping real QEMU preflight; set LSB_TEST_REAL_QEMU=1 to enable");
+            return;
+        }
+
+        let host = StdQemuDiscoveryHost;
+        let runner = StdQemuCommandRunner;
+        let report = QemuPreflight::new(QemuDiscovery::new(&host), &runner)
+            .run()
+            .expect("real QEMU preflight should pass");
+
+        assert_eq!(report.whpx.required_accelerator, PRODUCTION_ACCELERATOR);
+    }
+}
