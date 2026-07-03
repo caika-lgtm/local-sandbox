@@ -17,6 +17,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # Stores download crates globally across all workflow runs
+  CARGO_HOME: "C:\\cargo_cache"
+  # Isolates build artifacts per repository to avoid concurrent write locks
+  CARGO_TARGET_DIR: "C:\\target_cache\\${{ github.repository }}"
+  RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+
 concurrency:
   group: windows-lsb-hardware
   cancel-in-progress: false
@@ -36,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-          clean: true
+          clean: false
           fetch-depth: 1
 
       - name: Configure PATH
