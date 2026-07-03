@@ -3,8 +3,8 @@
 Last updated: 2026-07-03
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M04 - QEMU process lifecycle
-Overall status: Done
+Current milestone: M05 - Direct Linux boot and serial logs
+Overall status: In progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m04-qemu-lifecycle`
+- Branch: `codex/windows-m05-direct-linux-boot-serial-logs`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `f0413a9`
-- End commit: M04 hardware validation commit on `codex/windows-m04-qemu-lifecycle`
+- Start commit: `2023e10`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -26,7 +26,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M02 QEMU discovery and preflight | Done | Codex | `codex/windows-m02-qemu-discovery-preflight` | Private QEMU discovery/version/WHPX preflight scaffolding and fake-runner tests are in place. |
 | M03 QEMU argv builder | Done | Codex | `codex/windows-m03-qemu-argv-builder` | Typed deterministic QEMU argv construction, sanitized diagnostics, and golden tests are in place. |
 | M04 QEMU process lifecycle | Done | Codex | `codex/windows-m04-qemu-lifecycle` | Private QEMU supervisor can spawn, monitor, terminate, write lifecycle artifacts, and use Windows Job Object cleanup; not wired to public VM startup and no guest boot. |
-| M05 Direct Linux boot and serial logs | Not started | TBD | TBD | Process supervision is available; next milestone must add direct Linux boot and serial log integration without guest readiness yet. |
+| M05 Direct Linux boot and serial logs | In progress | Codex | `codex/windows-m05-direct-linux-boot-serial-logs` | Wiring direct Linux boot and serial log artifacts through the existing QEMU discovery, argv builder, and process supervisor. |
 | M06 Virtio-serial control transport | Blocked by M05 | TBD | TBD | Requires bootable guest and QEMU chardev. |
 | M07 Guest ready handshake | Blocked by M06 | TBD | TBD | Requires control transport. |
 | M08 Exec command | Blocked by M07 | TBD | TBD | First useful guest operation. |
@@ -75,6 +75,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - 2026-07-03: M04 `terminate()`, `kill()`, and `Drop` perform forced cleanup only. M05/MQMP should add private graceful QEMU shutdown before disk/checkpoint work depends on clean QEMU exit.
 - 2026-07-03: M04 still assigns QEMU to the cleanup Job Object immediately after `Command::spawn`. Before public boot integration, evaluate create-in-job or suspended-create/resume if QEMU is observed to spawn helper processes before Job Object assignment.
 - 2026-07-03: QEMU executable validation still checks existence and file-ness only. Add provenance/ACL diagnostics under existing risk R008 before public Windows runtime support.
+- 2026-07-03: Started M05 on `codex/windows-m05-direct-linux-boot-serial-logs` from `2023e10`; scope is direct Linux boot, serial/QEMU log artifacts, boot observation timeout, and Windows backend lifecycle wiring only. Guest control, readiness handshake, exec, mounts, networking, checkpoints, and Node packaging remain out of scope.
 
 ## Test evidence log
 
