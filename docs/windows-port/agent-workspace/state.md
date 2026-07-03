@@ -3,8 +3,8 @@
 Last updated: 2026-07-03
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M02 - QEMU discovery and WHPX preflight
-Overall status: Done
+Current milestone: M03 - QEMU argv builder
+Overall status: In progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m02-qemu-discovery-preflight`
+- Branch: `codex/windows-m03-qemu-argv-builder`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `958562e`
-- End commit: M02 handoff commit on `codex/windows-m02-qemu-discovery-preflight`
+- Start commit: `1d0a3c8`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -24,7 +24,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 |---|---|---|---|---|
 | M01 Windows compile stubs | Done | Codex | `codex/windows-m01-compile-stubs` | Windows x86_64 compile stubs are in place; runtime remains unsupported. |
 | M02 QEMU discovery and preflight | Done | Codex | `codex/windows-m02-qemu-discovery-preflight` | Private QEMU discovery/version/WHPX preflight scaffolding and fake-runner tests are in place. |
-| M03 QEMU argv builder | Not started | TBD | TBD | Can use M02 `QemuPath`, `QemuVersion`, and preflight report shape. |
+| M03 QEMU argv builder | In progress | Codex | `codex/windows-m03-qemu-argv-builder` | Building typed deterministic QEMU argv construction under the private Windows QEMU backend module. |
 | M04 QEMU process lifecycle | Blocked by M03 | TBD | TBD | Requires argv builder. |
 | M05 Direct Linux boot and serial logs | Blocked by M04 | TBD | TBD | Requires process supervision. |
 | M06 Virtio-serial control transport | Blocked by M05 | TBD | TBD | Requires bootable guest and QEMU chardev. |
@@ -55,6 +55,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - 2026-07-03: Started M02 on `codex/windows-m02-qemu-discovery-preflight` from `958562e`; scope is QEMU discovery, version probing, WHPX preflight diagnostics, and fake-runner unit tests only.
 - 2026-07-03: Completed M02 QEMU discovery/preflight scaffolding under `lsb-platform::windows_x86_64::qemu`. Added env/config/PATH discovery, `--version` parsing, `--help` suitability checks, WHPX `-accel help` inspection, structured actionable errors, and fake host/runner unit tests. No VM boot, argv builder, QEMU process lifecycle, or TCG fallback was implemented.
 - 2026-07-03: Ran Windows hardware workflow through `./scripts/win-gh-test`. `check` passed on run `28653449586`; `unit` passed on run `28653507512`.
+- 2026-07-03: Started M03 on `codex/windows-m03-qemu-argv-builder` from `1d0a3c8`; scope is typed deterministic QEMU argv construction only, with no QEMU spawn, process lifecycle, boot, virtio-serial connection, networking, mounts, or checkpoint implementation.
 
 ## Active implementation notes
 
