@@ -1,0 +1,21 @@
+docs/windows-port/agent-workspace/milestones/04-qemu-process-lifecycle.md
+  s_45200ed8c39536::t_c5c909e47c76a0 16,49,73-74,78-79
+docs/windows-port/agent-workspace/state.md
+  s_45200ed8c39536::t_0fe79de50eb05b 62,75,88,90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "87d8dd8c5a2df5dd040b81d10324e9e354754ff4",
+  "prompts": {},
+  "sessions": {
+    "s_45200ed8c39536": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f279a-580a-7142-891b-1fd9c6490e80",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
