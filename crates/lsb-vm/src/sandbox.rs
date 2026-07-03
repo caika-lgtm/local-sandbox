@@ -19,11 +19,12 @@ use lsb_platform::terminal;
 use lsb_platform::{self, PlatformSharedDir, PlatformVm, PlatformVmConfig, VmState};
 
 use lsb_proto::{
-    frame, ChmodRequest, CopyRequest, ExecRequest, ForwardRequest, ForwardResponse, FsOkResponse,
-    MkdirRequest, MountRequest, MountResponse, PortMapping, ReadDirRequest, ReadDirResponse,
-    ReadFileRequest, RemoveRequest, RenameRequest, StatRequest, StatResponse, WatchRequest,
-    WriteFileRequest, WriteFileResponse, VSOCK_PORT, VSOCK_PORT_FORWARD,
+    frame, ChmodRequest, CopyRequest, ExecRequest, FsOkResponse, MkdirRequest, MountRequest,
+    MountResponse, PortMapping, ReadDirRequest, ReadDirResponse, ReadFileRequest, RemoveRequest,
+    RenameRequest, StatRequest, StatResponse, WatchRequest, WriteFileRequest, WriteFileResponse,
 };
+#[cfg(target_os = "macos")]
+use lsb_proto::{ForwardRequest, ForwardResponse, VSOCK_PORT, VSOCK_PORT_FORWARD};
 
 #[cfg(not(target_os = "macos"))]
 fn unsupported_runtime(capability: &str, milestone: &str) -> anyhow::Error {
