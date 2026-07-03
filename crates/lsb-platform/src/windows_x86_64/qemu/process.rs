@@ -69,8 +69,8 @@ pub(crate) struct QemuProcessEnvironment {
 impl Default for QemuProcessEnvironment {
     fn default() -> Self {
         Self {
-            inherit_parent: true,
-            variables: Vec::new(),
+            inherit_parent: false,
+            variables: minimal_qemu_environment(),
         }
     }
 }
@@ -494,10 +494,15 @@ impl QemuSupervisor {
             .stderr(Stdio::from(stderr));
         apply_environment(&mut command, &self.config.environment);
 
-        let mut child = command.spawn().map_err(|err| {
-            self.state = QemuProcessState::Failed;
-            spawn_error(&self.config.command.program, err)
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                self.state = QemuProcessState::Failed;
+                let error = spawn_error(&self.config.command.program, err);
+                let _ = self.write_status_artifact();
+                return Err(error);
+            }
+        };
         let pid = child.id();
         self.pid = Some(pid);
 
@@ -513,16 +518,11 @@ impl QemuSupervisor {
         };
         self.child = Some(child);
 
-        if let Some(status) = self.wait_for_startup_exit()? {
-            self.child = None;
-            self.exit_status = Some(status.clone());
-            self.state = QemuProcessState::Failed;
-            let _ = self.write_status_artifact();
-            return Err(startup_exit_error(status, &self.config.artifacts.stderr));
+        if let Err(err) = self.finish_startup_after_spawn() {
+            self.cleanup_after_failed_start();
+            return Err(err);
         }
 
-        self.state = QemuProcessState::Running;
-        self.write_status_artifact()?;
         Ok(())
     }
 
@@ -560,18 +560,10 @@ impl QemuSupervisor {
             return self.exit_status.clone().ok_or(QemuProcessError::NotStarted);
         }
 
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(status) = self.poll_exit()? {
-                self.state = QemuProcessState::Exited;
-                self.write_status_artifact()?;
-                return Ok(status);
-            }
-            if Instant::now() >= deadline {
-                return Err(QemuProcessError::WaitTimeout { timeout });
-            }
-            std::thread::sleep(POLL_INTERVAL);
-        }
+        let status = self.wait_for_exit_without_status(timeout)?;
+        self.state = QemuProcessState::Exited;
+        self.write_status_artifact()?;
+        Ok(status)
     }
 
     pub(crate) fn terminate(&mut self) -> Result<Option<QemuExitStatus>, QemuProcessError> {
@@ -579,11 +571,31 @@ impl QemuSupervisor {
             return Ok(self.exit_status.clone());
         }
 
-        self.kill_child("terminate")?;
-        let status = self.wait(self.config.terminate_timeout)?;
-        self.state = QemuProcessState::Terminated;
-        self.write_status_artifact()?;
-        Ok(Some(status))
+        let terminate_result = self.request_child_termination("terminate");
+        let wait_result = self.wait_for_exit_without_status(self.config.terminate_timeout);
+
+        match (terminate_result, wait_result) {
+            (Ok(()), Ok(status)) => {
+                self.state = QemuProcessState::Terminated;
+                self.write_status_artifact()?;
+                Ok(Some(status))
+            }
+            (Err(terminate_error), Ok(_status)) => {
+                self.state = QemuProcessState::Terminated;
+                let _ = self.write_status_artifact();
+                Err(terminate_error)
+            }
+            (Ok(()), Err(wait_error)) => {
+                self.state = QemuProcessState::Failed;
+                let _ = self.write_status_artifact();
+                Err(wait_error)
+            }
+            (Err(terminate_error), Err(_wait_error)) => {
+                self.state = QemuProcessState::Failed;
+                let _ = self.write_status_artifact();
+                Err(terminate_error)
+            }
+        }
     }
 
     pub(crate) fn kill(&mut self) -> Result<Option<QemuExitStatus>, QemuProcessError> {
@@ -683,6 +695,28 @@ impl QemuSupervisor {
         })
     }
 
+    fn finish_startup_after_spawn(&mut self) -> Result<(), QemuProcessError> {
+        if let Some(status) = self.wait_for_startup_exit()? {
+            self.exit_status = Some(status.clone());
+            self.state = QemuProcessState::Failed;
+            let _ = self.write_status_artifact();
+            return Err(startup_exit_error(status, &self.config.artifacts.stderr));
+        }
+
+        self.state = QemuProcessState::Running;
+        self.write_status_artifact()?;
+        Ok(())
+    }
+
+    fn cleanup_after_failed_start(&mut self) {
+        if self.child.is_some() {
+            let _ = self.request_child_termination("cleanup after failed startup");
+            let _ = self.wait_for_exit_without_status(self.config.terminate_timeout);
+        }
+        self.state = QemuProcessState::Failed;
+        let _ = self.write_status_artifact();
+    }
+
     fn wait_for_startup_exit(&mut self) -> Result<Option<QemuExitStatus>, QemuProcessError> {
         let deadline = Instant::now() + self.config.startup_timeout;
         loop {
@@ -691,6 +725,22 @@ impl QemuSupervisor {
             }
             if Instant::now() >= deadline {
                 return Ok(None);
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    fn wait_for_exit_without_status(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<QemuExitStatus, QemuProcessError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.poll_exit()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                return Err(QemuProcessError::WaitTimeout { timeout });
             }
             std::thread::sleep(POLL_INTERVAL);
         }
@@ -716,10 +766,27 @@ impl QemuSupervisor {
             })
     }
 
-    fn kill_child(&mut self, operation: &'static str) -> Result<(), QemuProcessError> {
-        if self.containment.terminate()? {
-            return Ok(());
+    fn request_child_termination(
+        &mut self,
+        operation: &'static str,
+    ) -> Result<(), QemuProcessError> {
+        match self.containment.terminate() {
+            Ok(true) => Ok(()),
+            Ok(false) => self.kill_direct_child(operation),
+            Err(containment_error) => {
+                let direct_kill_result = self.kill_direct_child(operation);
+                match direct_kill_result {
+                    Ok(()) => Err(containment_error),
+                    Err(direct_kill_error) => Err(attach_direct_kill_error(
+                        containment_error,
+                        direct_kill_error,
+                    )),
+                }
+            }
         }
+    }
+
+    fn kill_direct_child(&mut self, operation: &'static str) -> Result<(), QemuProcessError> {
         let Some(child) = self.child.as_mut() else {
             return Ok(());
         };
@@ -913,6 +980,21 @@ fn apply_environment(command: &mut Command, environment: &QemuProcessEnvironment
     }
 }
 
+fn minimal_qemu_environment() -> Vec<(OsString, OsString)> {
+    #[cfg(target_os = "windows")]
+    {
+        ["SystemRoot", "WINDIR"]
+            .into_iter()
+            .filter_map(|key| std::env::var_os(key).map(|value| (OsString::from(key), value)))
+            .collect()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
 fn create_artifact_file(path: &PathBuf, operation: &'static str) -> Result<File, QemuProcessError> {
     File::create(path).map_err(|err| artifact_error(path, operation, err))
 }
@@ -951,6 +1033,22 @@ fn spawn_error(path: &PathBuf, err: io::Error) -> QemuProcessError {
             path: path.clone(),
             detail: err.to_string(),
         }
+    }
+}
+
+fn attach_direct_kill_error(
+    containment_error: QemuProcessError,
+    direct_kill_error: QemuProcessError,
+) -> QemuProcessError {
+    match containment_error {
+        QemuProcessError::JobObjectTerminateFailed { detail } => {
+            QemuProcessError::JobObjectTerminateFailed {
+                detail: format!(
+                    "{detail}; direct child kill fallback also failed: {direct_kill_error}"
+                ),
+            }
+        }
+        other => other,
     }
 }
 
@@ -1001,9 +1099,28 @@ mod tests {
 
     const FAKE_CHILD_ENV: &str = "LSB_QEMU_PROCESS_TEST_CHILD";
     const FAKE_PID_FILE_ENV: &str = "LSB_QEMU_PROCESS_TEST_PID_FILE";
+    const FAKE_STATUS_PATH_ENV: &str = "LSB_QEMU_PROCESS_TEST_STATUS_PATH";
+    const FAKE_SECRET_ENV_NAME_ENV: &str = "LSB_QEMU_PROCESS_TEST_SECRET_ENV_NAME";
     const FAKE_CHILD_TEST_NAME: &str =
         "windows_x86_64::qemu::process::tests::fake_qemu_child_entrypoint";
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct EnvVarGuard {
+        key: String,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: String, value: &str) -> Self {
+            env::set_var(&key, value);
+            Self { key }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            env::remove_var(&self.key);
+        }
+    }
 
     fn command() -> QemuCommand {
         QemuArgvBuilder::new(QemuBootConfig::direct_linux_boot(
@@ -1115,6 +1232,37 @@ mod tests {
                 let _ = std::io::stderr().flush();
                 std::process::exit(17);
             }
+            "block-status" => {
+                let status_path =
+                    PathBuf::from(env::var_os(FAKE_STATUS_PATH_ENV).expect("status path env"));
+                let deadline = Instant::now() + Duration::from_secs(2);
+                loop {
+                    if status_path.is_file() {
+                        fs::remove_file(&status_path).expect("status file should be removable");
+                        fs::create_dir(&status_path).expect("status path should become directory");
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        eprintln!("timed out waiting for status artifact");
+                        std::process::exit(18);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                println!("fake qemu blocked status artifact");
+                let _ = std::io::stdout().flush();
+                std::thread::sleep(Duration::from_secs(60));
+            }
+            "assert-secret-not-inherited" => {
+                let secret_name =
+                    env::var(FAKE_SECRET_ENV_NAME_ENV).expect("secret env name should be set");
+                if env::var_os(&secret_name).is_some() {
+                    eprintln!("secret-like parent environment variable was inherited");
+                    std::process::exit(19);
+                }
+                println!("secret environment was not inherited");
+                let _ = std::io::stdout().flush();
+                std::thread::sleep(Duration::from_secs(60));
+            }
             "spawn-grandchild" => {
                 let pid_file = env::var(FAKE_PID_FILE_ENV).expect("pid file env should be set");
                 let mut child = Command::new(env::current_exe().expect("current exe"))
@@ -1164,6 +1312,13 @@ mod tests {
     }
 
     #[test]
+    fn default_environment_does_not_inherit_parent() {
+        let environment = QemuProcessEnvironment::default();
+
+        assert!(!environment.inherit_parent);
+    }
+
+    #[test]
     fn fake_process_start_timeout_terminate_and_artifacts_work() {
         let artifact_dir = temp_artifact_dir("log");
         let mut supervisor = fake_supervisor("log", artifact_dir.clone());
@@ -1201,9 +1356,11 @@ mod tests {
         assert!(!argv.contains(FAKE_CHILD_ENV));
 
         let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
+        let override_count = supervisor.config.environment.variables.len();
         assert!(status.contains("\"state\": \"terminated\""));
         assert!(status.contains("\"stdout\": \"qemu.stdout.log\""));
-        assert!(status.contains("\"override_count\": 1"));
+        assert!(status.contains("\"inherit_parent\": false"));
+        assert!(status.contains(&format!("\"override_count\": {override_count}")));
         assert!(!status.contains(FAKE_CHILD_ENV));
         assert!(!status.contains("fake qemu stderr ready"));
 
@@ -1212,6 +1369,47 @@ mod tests {
         assert!(diagnostics
             .redacted_command
             .contains("<qemu-system-x86_64.exe>"));
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn fake_process_does_not_inherit_secret_like_parent_environment() {
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let secret_name = format!(
+            "LSB_QEMU_PROCESS_TEST_SECRET_{}_{}",
+            std::process::id(),
+            counter
+        );
+        let _secret_guard = EnvVarGuard::set(secret_name.clone(), "super-secret-token");
+        let artifact_dir = temp_artifact_dir("secret-env");
+        let mut supervisor = fake_supervisor("assert-secret-not-inherited", artifact_dir.clone());
+        supervisor.config.environment.variables.push((
+            OsString::from(FAKE_SECRET_ENV_NAME_ENV),
+            OsString::from(secret_name.clone()),
+        ));
+
+        supervisor
+            .start()
+            .expect("fake process should start without inherited secrets");
+
+        let stdout = wait_for_file_contains(
+            &supervisor.artifacts().stdout,
+            "secret environment was not inherited",
+        );
+        assert!(stdout.contains("secret environment was not inherited"));
+
+        supervisor
+            .terminate()
+            .expect("terminate after secret environment test should succeed");
+
+        let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
+        let argv = fs::read_to_string(&supervisor.artifacts().argv).expect("argv artifact");
+        assert!(status.contains("\"inherit_parent\": false"));
+        assert!(!status.contains(&secret_name));
+        assert!(!status.contains("super-secret-token"));
+        assert!(!argv.contains(&secret_name));
+        assert!(!argv.contains("super-secret-token"));
 
         let _ = fs::remove_dir_all(artifact_dir);
     }
@@ -1238,6 +1436,62 @@ mod tests {
         assert!(stderr.contains("WHPX runtime initialization failed"));
         let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
         assert!(status.contains("\"state\": \"failed\""));
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn spawn_failure_updates_status_artifact_to_failed() {
+        let artifact_dir = temp_artifact_dir("spawn-failure");
+        let bad_executable = artifact_dir.join("not-qemu.exe");
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should be writable");
+        fs::write(&bad_executable, "not an executable").expect("bad executable should be writable");
+        let mut command = fake_command();
+        command.program = bad_executable;
+        let mut supervisor = QemuSupervisor::new(QemuSupervisorConfig::new(command, artifact_dir));
+
+        let err = supervisor
+            .start()
+            .expect_err("invalid executable should fail during spawn");
+
+        assert!(matches!(
+            err.kind(),
+            QemuProcessErrorKind::PermissionDenied | QemuProcessErrorKind::SpawnFailed
+        ));
+        assert_eq!(supervisor.state(), QemuProcessState::Failed);
+        let status = fs::read_to_string(&supervisor.artifacts().status).expect("status artifact");
+        assert!(status.contains("\"state\": \"failed\""));
+
+        let _ = fs::remove_dir_all(&supervisor.artifacts().directory);
+    }
+
+    #[test]
+    fn post_spawn_status_failure_terminates_fake_process() {
+        let artifact_dir = temp_artifact_dir("post-spawn-status-failure");
+        let mut supervisor = fake_supervisor("block-status", artifact_dir.clone());
+        supervisor.config.startup_timeout = Duration::from_millis(500);
+        supervisor.config.environment.variables.push((
+            OsString::from(FAKE_STATUS_PATH_ENV),
+            supervisor.artifacts().status.as_os_str().to_owned(),
+        ));
+
+        let err = supervisor
+            .start()
+            .expect_err("post-spawn status artifact failure should fail startup");
+
+        assert!(matches!(
+            err.kind(),
+            QemuProcessErrorKind::ArtifactIo | QemuProcessErrorKind::PermissionDenied
+        ));
+        assert_eq!(supervisor.state(), QemuProcessState::Failed);
+        assert!(
+            supervisor.child.is_none(),
+            "failed startup cleanup should not leave a tracked child process"
+        );
+        assert!(
+            supervisor.exit_status().is_some(),
+            "failed startup cleanup should wait best-effort for the child"
+        );
 
         let _ = fs::remove_dir_all(artifact_dir);
     }
