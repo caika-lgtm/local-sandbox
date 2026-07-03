@@ -80,6 +80,8 @@ Append newest entries at the top.
 
 | Date | Milestone | Platform | Command / test | Result | Notes |
 |---|---|---|---|---|---|
+| 2026-07-03 | M04 review fixes | Windows self-hosted | `./scripts/win-gh-test check` | Pass | Run `28658439977`; hardware workflow check lane passed on pushed branch after review fixes. |
+| 2026-07-03 | M04 review fixes | Windows self-hosted | `./scripts/win-gh-test unit` | Pass | Run `28658499031`; hardware workflow unit lane passed, covering Windows-only lifecycle cleanup tests. |
 | 2026-07-03 | M04 review fixes | macOS | `cargo fmt --all -- --check` | Pass | Formatting verified after startup cleanup, environment, and regression-test updates. |
 | 2026-07-03 | M04 review fixes | macOS | `cargo test -p lsb-platform windows_x86_64::qemu::process -- --nocapture` | Pass | 10 process lifecycle tests passed, including new spawn-failure status, post-spawn cleanup, and secret environment isolation regressions. |
 | 2026-07-03 | M04 review fixes | macOS | `cargo check --workspace` | Pass | Full workspace compile check passed after review fixes. |
