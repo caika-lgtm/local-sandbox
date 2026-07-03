@@ -3,8 +3,8 @@
 Last updated: 2026-07-03
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M03 - QEMU argv builder
-Overall status: Done
+Current milestone: M04 - QEMU process lifecycle
+Overall status: In progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m03-qemu-argv-builder`
+- Branch: `codex/windows-m04-qemu-lifecycle`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `1d0a3c8`
-- End commit: M03 handoff commit on `codex/windows-m03-qemu-argv-builder`
+- Start commit: `f0413a9`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -25,7 +25,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M01 Windows compile stubs | Done | Codex | `codex/windows-m01-compile-stubs` | Windows x86_64 compile stubs are in place; runtime remains unsupported. |
 | M02 QEMU discovery and preflight | Done | Codex | `codex/windows-m02-qemu-discovery-preflight` | Private QEMU discovery/version/WHPX preflight scaffolding and fake-runner tests are in place. |
 | M03 QEMU argv builder | Done | Codex | `codex/windows-m03-qemu-argv-builder` | Typed deterministic QEMU argv construction, sanitized diagnostics, and golden tests are in place. |
-| M04 QEMU process lifecycle | Blocked by M03 | TBD | TBD | Requires argv builder. |
+| M04 QEMU process lifecycle | In progress | Codex | `codex/windows-m04-qemu-lifecycle` | Process supervision, lifecycle artifacts, and cleanup containment only; no guest boot. |
 | M05 Direct Linux boot and serial logs | Blocked by M04 | TBD | TBD | Requires process supervision. |
 | M06 Virtio-serial control transport | Blocked by M05 | TBD | TBD | Requires bootable guest and QEMU chardev. |
 | M07 Guest ready handshake | Blocked by M06 | TBD | TBD | Requires control transport. |
@@ -66,6 +66,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - 2026-07-03: M02 introduced private QEMU modules at `crates/lsb-platform/src/windows_x86_64/qemu/{discovery.rs,version.rs,preflight.rs}`. The module has a scoped `dead_code` allowance because M02 prepares the reusable preflight API before M04 wires VM startup/process lifecycle.
 - 2026-07-03: Real QEMU preflight hook is `windows_x86_64::qemu::tests::real_qemu_preflight_when_explicitly_enabled`; run it only with `LSB_TEST_REAL_QEMU=1` and `LSB_QEMU` pointing at `qemu-system-x86_64.exe`.
 - 2026-07-03: M03 added `crates/lsb-platform/src/windows_x86_64/qemu/{config.rs,argv.rs}`. The builder returns a program `PathBuf` plus `Vec<OsString>` argv and a separate redacted diagnostic display. Paths with spaces are preserved as single argv entries; root disk paths embedded in QEMU option syntax escape commas by doubling them. QMP is represented only as a named pipe endpoint and remains QEMU-management-only.
+- 2026-07-03: Started M04 on `codex/windows-m04-qemu-lifecycle` from `f0413a9`; scope is QEMU process lifecycle, deterministic artifacts, fake-process tests, and Windows Job Object cleanup only. M04 must not implement guest boot, guest readiness, virtio-serial transport, networking, mounts, checkpoints, or Node packaging.
 
 ## Test evidence log
 

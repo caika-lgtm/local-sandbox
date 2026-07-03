@@ -1,6 +1,6 @@
 # M04: QEMU Process Lifecycle and Cleanup
 
-Status: Not started
+Status: In progress
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -68,7 +68,7 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 
 ## Handoff
 
-- Branch/PR: TBD
+- Branch/PR: `codex/windows-m04-qemu-lifecycle`
 - Summary: TBD
 - Tests run: TBD
 - Debug artifacts: TBD
