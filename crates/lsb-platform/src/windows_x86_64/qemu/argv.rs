@@ -13,6 +13,29 @@ use super::preflight::PRODUCTION_ACCELERATOR;
 pub(crate) struct QemuCommand {
     pub program: PathBuf,
     pub argv: Vec<OsString>,
+    diagnostic_argv: Vec<String>,
+    diagnostic_label: Option<String>,
+}
+
+impl QemuCommand {
+    pub(crate) fn sanitized_argv(&self) -> &[String] {
+        &self.diagnostic_argv
+    }
+
+    pub(crate) fn diagnostic_label(&self) -> Option<&str> {
+        self.diagnostic_label.as_deref()
+    }
+
+    pub(crate) fn sanitized_display(&self) -> String {
+        std::iter::once("<qemu-system-x86_64.exe>".to_string())
+            .chain(
+                self.diagnostic_argv
+                    .iter()
+                    .map(|arg| render_diagnostic_arg(arg)),
+            )
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,58 +55,75 @@ impl QemuArgvBuilder {
         validate_path("root_disk.path", &self.config.root_disk.path)?;
         validate_machine(&self.config)?;
 
-        let mut argv = Vec::new();
-        push_arg(&mut argv, "-nodefaults");
+        let mut command = QemuCommandParts::default();
+        push_arg(&mut command, "-nodefaults");
         push_pair(
-            &mut argv,
+            &mut command,
             "-machine",
             format!("{DEFAULT_MACHINE_TYPE},accel={PRODUCTION_ACCELERATOR}"),
         );
-        push_pair(&mut argv, "-cpu", DEFAULT_CPU_MODEL);
+        push_pair(&mut command, "-cpu", DEFAULT_CPU_MODEL);
         push_pair(
-            &mut argv,
+            &mut command,
             "-smp",
             self.config.machine.vcpu_count.to_string(),
         );
         push_pair(
-            &mut argv,
+            &mut command,
             "-m",
             format!("{}M", self.config.machine.memory_mib),
         );
-        push_arg(&mut argv, "-no-reboot");
-        push_pair(&mut argv, "-display", "none");
-        push_pair(&mut argv, "-monitor", "none");
-        push_path_pair(&mut argv, "-kernel", &self.config.kernel_image);
-        push_path_pair(&mut argv, "-initrd", &self.config.initrd_image);
+        push_arg(&mut command, "-no-reboot");
+        push_pair(&mut command, "-display", "none");
+        push_pair(&mut command, "-monitor", "none");
+        push_path_pair(
+            &mut command,
+            "-kernel",
+            &self.config.kernel_image,
+            "<kernel>",
+        );
+        push_path_pair(
+            &mut command,
+            "-initrd",
+            &self.config.initrd_image,
+            "<initrd>",
+        );
         push_pair(
-            &mut argv,
+            &mut command,
             "-append",
             kernel_append(
                 &self.config.kernel_append,
                 self.config.control_channel.is_some(),
             )?,
         );
-        push_pair(&mut argv, "-drive", drive_arg(&self.config.root_disk)?);
+        push_pair_redacted(
+            &mut command,
+            "-drive",
+            drive_arg(&self.config.root_disk)?,
+            drive_arg_redacted(&self.config.root_disk),
+        );
         push_pair(
-            &mut argv,
+            &mut command,
             "-device",
             format!("virtio-blk-pci,drive={ROOT_DRIVE_ID}"),
         );
-        push_serial(&mut argv, &self.config.serial)?;
+        push_serial(&mut command, &self.config.serial)?;
 
         if let Some(control_channel) = &self.config.control_channel {
-            push_control_channel(&mut argv, control_channel)?;
+            push_control_channel(&mut command, control_channel)?;
         }
 
         if let Some(qmp) = &self.config.qmp {
-            push_qmp(&mut argv, qmp)?;
+            push_qmp(&mut command, qmp)?;
         }
 
-        push_pair(&mut argv, "-nic", "none");
+        push_pair(&mut command, "-nic", "none");
 
         Ok(QemuCommand {
             program: self.config.qemu_executable.clone(),
-            argv,
+            argv: command.argv,
+            diagnostic_argv: command.diagnostic_argv,
+            diagnostic_label: self.config.diagnostic_label.clone(),
         })
     }
 }
@@ -128,6 +168,12 @@ impl fmt::Display for QemuArgvError {
 
 impl std::error::Error for QemuArgvError {}
 
+#[derive(Debug, Default)]
+struct QemuCommandParts {
+    argv: Vec<OsString>,
+    diagnostic_argv: Vec<String>,
+}
+
 fn validate_machine(config: &QemuBootConfig) -> Result<(), QemuArgvError> {
     if config.machine.vcpu_count == 0 {
         return Err(QemuArgvError::InvalidNumericInput {
@@ -152,18 +198,42 @@ fn validate_path(field: &'static str, path: &Path) -> Result<(), QemuArgvError> 
     }
 }
 
-fn push_arg(argv: &mut Vec<OsString>, value: impl Into<OsString>) {
-    argv.push(value.into());
+fn push_arg(command: &mut QemuCommandParts, value: &'static str) {
+    command.argv.push(value.into());
+    command.diagnostic_argv.push(value.to_string());
 }
 
-fn push_pair(argv: &mut Vec<OsString>, flag: &'static str, value: impl Into<OsString>) {
-    push_arg(argv, flag);
-    push_arg(argv, value);
+fn push_pair(
+    command: &mut QemuCommandParts,
+    flag: &'static str,
+    value: impl Into<OsString> + ToString,
+) {
+    let value = value.to_string();
+    push_pair_redacted(command, flag, value.clone(), value);
 }
 
-fn push_path_pair(argv: &mut Vec<OsString>, flag: &'static str, path: &Path) {
-    push_arg(argv, flag);
-    push_arg(argv, path.as_os_str().to_owned());
+fn push_pair_redacted(
+    command: &mut QemuCommandParts,
+    flag: &'static str,
+    value: impl Into<OsString>,
+    diagnostic_value: impl Into<String>,
+) {
+    command.argv.push(flag.into());
+    command.argv.push(value.into());
+    command.diagnostic_argv.push(flag.to_string());
+    command.diagnostic_argv.push(diagnostic_value.into());
+}
+
+fn push_path_pair(
+    command: &mut QemuCommandParts,
+    flag: &'static str,
+    path: &Path,
+    diagnostic_value: &'static str,
+) {
+    command.argv.push(flag.into());
+    command.argv.push(path.as_os_str().to_owned());
+    command.diagnostic_argv.push(flag.to_string());
+    command.diagnostic_argv.push(diagnostic_value.to_string());
 }
 
 fn kernel_append(
@@ -217,43 +287,55 @@ fn drive_arg(disk: &QemuDiskConfig) -> Result<String, QemuArgvError> {
     ))
 }
 
-fn push_serial(argv: &mut Vec<OsString>, serial: &QemuSerialConfig) -> Result<(), QemuArgvError> {
+fn drive_arg_redacted(disk: &QemuDiskConfig) -> String {
+    format!(
+        "if=none,id={ROOT_DRIVE_ID},file=<root-disk>,format={}",
+        disk.format.as_qemu_arg()
+    )
+}
+
+fn push_serial(
+    command: &mut QemuCommandParts,
+    serial: &QemuSerialConfig,
+) -> Result<(), QemuArgvError> {
     match serial {
         QemuSerialConfig::File(path) => {
             validate_path("serial.file", path)?;
-            push_pair(
-                argv,
+            push_pair_redacted(
+                command,
                 "-serial",
                 format!("file:{}", path_as_qemu_string("serial.file", path)?),
+                "file:<serial-log>",
             );
         }
-        QemuSerialConfig::Null => push_pair(argv, "-serial", "null"),
+        QemuSerialConfig::Null => push_pair(command, "-serial", "null"),
     }
     Ok(())
 }
 
 fn push_control_channel(
-    argv: &mut Vec<OsString>,
+    command: &mut QemuCommandParts,
     control_channel: &QemuControlChannelConfig,
 ) -> Result<(), QemuArgvError> {
     validate_qemu_suboption("control_channel.pipe_name", &control_channel.pipe_name)?;
     validate_qemu_suboption("control_channel.port_name", &control_channel.port_name)?;
 
     push_pair(
-        argv,
+        command,
         "-device",
         format!("virtio-serial-pci,id={CONTROL_BUS_ID}"),
     );
-    push_pair(
-        argv,
+    push_pair_redacted(
+        command,
         "-chardev",
         format!(
             "pipe,id={CONTROL_CHARDEV_ID},path={}",
             control_channel.pipe_name
         ),
+        format!("pipe,id={CONTROL_CHARDEV_ID},path=<control-pipe>"),
     );
     push_pair(
-        argv,
+        command,
         "-device",
         format!(
             "virtserialport,chardev={CONTROL_CHARDEV_ID},name={}",
@@ -263,11 +345,16 @@ fn push_control_channel(
     Ok(())
 }
 
-fn push_qmp(argv: &mut Vec<OsString>, qmp: &QemuQmpEndpoint) -> Result<(), QemuArgvError> {
+fn push_qmp(command: &mut QemuCommandParts, qmp: &QemuQmpEndpoint) -> Result<(), QemuArgvError> {
     match qmp {
         QemuQmpEndpoint::NamedPipe { pipe_name } => {
             validate_qemu_suboption("qmp.pipe_name", pipe_name)?;
-            push_pair(argv, "-qmp", format!("pipe:{pipe_name},server=on,wait=off"));
+            push_pair_redacted(
+                command,
+                "-qmp",
+                format!("pipe:{pipe_name},server=on,wait=off"),
+                "pipe:<qmp-pipe>,server=on,wait=off",
+            );
         }
     }
     Ok(())
@@ -299,4 +386,12 @@ fn validate_qemu_suboption(field: &'static str, value: &str) -> Result<(), QemuA
         });
     }
     Ok(())
+}
+
+fn render_diagnostic_arg(value: &str) -> String {
+    if value.chars().any(char::is_whitespace) {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
 }
