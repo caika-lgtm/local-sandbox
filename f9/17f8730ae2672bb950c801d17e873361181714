@@ -1,0 +1,32 @@
+docs/windows-port/agent-workspace/decisions.md
+  s_8e61ef9c9e812b::t_d1ae64e31227f3 150-157
+docs/windows-port/agent-workspace/milestones/05-direct-linux-boot-serial-logs.md
+  s_8e61ef9c9e812b::t_a39f59896f809d 3,45,72,74-75,78
+  s_8e61ef9c9e812b::t_1cfd3d3ce98081 73
+docs/windows-port/rfc-qemu-whpx.md
+  s_8e61ef9c9e812b::t_c039c46bb11970 323,329,1539,1547,1568
+docs/windows-port/agent-workspace/diagnostics.md
+  s_8e61ef9c9e812b::t_399be7bc008430 79-93,100-104
+  s_8e61ef9c9e812b::t_c3c18c1c5d382c 105
+docs/windows-port/agent-workspace/state.md
+  s_8e61ef9c9e812b::t_53cece56d93aff 96
+  s_8e61ef9c9e812b::t_0d0b5c233bcec8 7,19,29,46,65,85-86,94-95,161
+docs/windows-port/agent-workspace/validation.md
+  s_8e61ef9c9e812b::t_71b78c4c70ed53 65,141-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f917f8730ae2672bb950c801d17e873361181714",
+  "prompts": {},
+  "sessions": {
+    "s_8e61ef9c9e812b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f28a9-5b53-7311-86c2-682bf0789f83",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
