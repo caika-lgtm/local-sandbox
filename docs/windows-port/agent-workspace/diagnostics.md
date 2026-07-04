@@ -103,6 +103,10 @@ APX/MPX feature conflict warnings and `WHPX: Unexpected VP exit code 4`. Treat
 that signature as a CPU model/WHPX compatibility failure before changing boot
 assets or adding a TCG fallback.
 
+An `observed_alive` M05 result with an empty `serial.log` is still only a QEMU
+process/diagnostics result. Do not treat it as guest readiness until M06/M07 add
+the control transport and ready handshake.
+
 M05 boot error categories include:
 
 - `asset_missing`
