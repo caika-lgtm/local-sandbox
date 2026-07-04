@@ -91,12 +91,12 @@ target\windows-lsb-diagnostics\lsb-assets-work\<run-id>-<attempt>\
 
 The uploaded artifact is named `windows-lsb-diagnostics`.
 
-`boot.status.json` records the M05 success definition:
-`qemu_process_alive_after_boot_observation_window_with_serial_output`. This is
-not a guest-ready handshake. Until M06/M07 add virtio-serial control and
-readiness, a successful M05 boot observation means QEMU launched with WHPX,
-stayed alive for the observation window, and captured non-empty Linux serial
-output.
+For current M07 Windows boots, `boot.status.json` records state `guest_ready`
+and success definition
+`localsandbox_guest_ready_frame_received_over_control_transport` when the host
+receives a valid `GUEST_READY` LocalSandbox protocol frame over the established
+virtio-serial control channel. This is the readiness signal for
+`Sandbox.start()` on Windows; serial output is diagnostic context only.
 
 M05 uses `-cpu Westmere` for the Windows WHPX boot argv. The first provisioned
 boot smoke on QEMU 11.0.50 with `-cpu max` exited before serial output with
@@ -109,7 +109,7 @@ but `serial.log` remains empty, the boot path records `serial_output_missing`
 instead of success; check the kernel console configuration, QEMU serial device,
 and `qemu.stderr.log`.
 
-M05 boot error categories include:
+M05/M07 boot and readiness error categories include:
 
 - `asset_missing`
 - `unsupported_config`
@@ -120,8 +120,18 @@ M05 boot error categories include:
 - `process_start`
 - `process_status`
 - `guest_boot_exited`
+- `guest_ready_process_exited`
+- `guest_ready_timeout`
+- `guest_ready_protocol`
+- `guest_ready_transport`
+- `unsupported_windows_runtime_capability`
 - `serial_output_missing`
 - `stop_failed`
+
+Readiness timeout and protocol errors include the elapsed time, control-channel
+state, serial tail, QEMU stderr tail, and paths to the redacted argv/status
+artifacts. Invalid ready frames report frame type and payload length, not raw
+payload contents.
 
 Manual Windows boot smoke:
 

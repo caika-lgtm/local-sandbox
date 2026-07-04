@@ -35,7 +35,7 @@ impl WindowsVm {
         self.ensure_m05_supported_config()?;
         let initrd_path = self.config.initrd_path.clone().ok_or_else(|| {
             anyhow!(
-                "Windows direct QEMU boot requires initramfs.cpio.gz for M05 diagnostics; \
+                "Windows direct QEMU boot requires initramfs.cpio.gz for guest-ready diagnostics; \
                  run `lsb init` or provide an initrd path"
             )
         })?;
@@ -57,19 +57,19 @@ impl WindowsVm {
         if self.config.network_requested {
             return Err(unsupported(
                 "proxy networking",
-                "M12 network policy and proxy integration; no QEMU NIC is created in M05",
+                "M12 network policy and proxy integration; no QEMU NIC is created before that milestone",
             ));
         }
         if self.config.nbd_requested {
             return Err(unsupported(
                 "NBD/CAS root storage",
-                "M13 checkpoint/store MVP; M05 boots the prepared rootfs image directly",
+                "M13 checkpoint/store MVP; the current Windows boot path uses the prepared rootfs image directly",
             ));
         }
         if self.config.shared_dir_count > 0 {
             return Err(unsupported(
                 "directory mounts",
-                "M10 mount MVP semantics; M05 does not expose host directories",
+                "M10 mount MVP semantics; the current Windows boot path does not expose host directories",
             ));
         }
         Ok(())
@@ -164,7 +164,7 @@ impl PlatformVm for WindowsVm {
     fn connect_to_vsock_port(&self, _port: u32) -> Result<TcpStream> {
         Err(unsupported(
             "guest control transport",
-            "M06 exposes guest control through PlatformVm::connect_control using virtio-serial; macOS-style vsock guest control remains unsupported on Windows",
+            "M07 waits for guest-ready over PlatformVm::connect_control using virtio-serial; macOS-style vsock guest control remains unsupported on Windows",
         ))
     }
 }
@@ -252,7 +252,7 @@ mod tests {
         }];
         let vm = create_vm(config).expect("vm should be constructible");
 
-        let err = vm.start().expect_err("mounts should be unsupported in M05");
+        let err = vm.start().expect_err("mounts should be unsupported in M07");
         let message = err.to_string();
 
         assert!(message.contains("directory mounts"));
@@ -277,7 +277,7 @@ mod tests {
             .expect("supported config should build");
         let endpoint = boot_config
             .control_endpoint
-            .expect("M06 boot should configure control endpoint");
+            .expect("Windows boot should configure control endpoint");
 
         assert_eq!(
             endpoint.port_name(),

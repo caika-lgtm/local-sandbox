@@ -29,7 +29,7 @@ use lsb_proto::{ForwardRequest, ForwardResponse, VSOCK_PORT, VSOCK_PORT_FORWARD}
 #[cfg(not(target_os = "macos"))]
 fn unsupported_runtime(capability: &str, milestone: &str) -> anyhow::Error {
     anyhow::anyhow!(
-        "Windows support is in progress: {capability} is not implemented yet ({milestone}); M01 only provides compile stubs"
+        "Windows support is in progress: {capability} is not implemented yet ({milestone}); current Windows runtime support is limited to VM startup through the M07 guest-ready handshake"
     )
 }
 
@@ -825,7 +825,7 @@ impl Sandbox {
     fn connect_vsock(&self) -> Result<TcpStream> {
         Err(unsupported_runtime(
             "guest control transport",
-            "M06 virtio-serial control transport",
+            "M07 guest-ready uses virtio-serial; command sessions start in M08",
         ))
     }
 }
