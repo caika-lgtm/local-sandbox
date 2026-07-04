@@ -3,8 +3,8 @@
 Last updated: 2026-07-04
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M07 - Guest ready handshake
-Overall status: M07 in progress
+Current milestone: M08 - Exec command
+Overall status: M07 complete; M08 ready to start
 
 ## How to update this file
 
@@ -15,8 +15,8 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 - Branch: `codex/windows-m07-guest-ready-handshake`
 - Issue: TBD
 - Agent: Codex
-- Start commit: current branch head after M05 direct boot smoke fix/docs commits
-- End commit: TBD
+- Start commit: `b062c7d`
+- End commit: final M07 docs commit on this branch
 
 ## Milestone status table
 
@@ -28,11 +28,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M04 QEMU process lifecycle | Done | Codex | `codex/windows-m04-qemu-lifecycle` | Private QEMU supervisor can spawn, monitor, terminate, write lifecycle artifacts, and use Windows Job Object cleanup; not wired to public VM startup and no guest boot. |
 | M05 Direct Linux boot and serial logs | Done | Codex | `codex/windows-m05-direct-linux-boot-serial-logs` | Direct boot path, serial/QEMU artifacts, boot observation timeout, workflow boot asset provisioning, and provisioned self-hosted WHPX smoke evidence are in place. |
 | M06 Virtio-serial control transport | Done | Codex | `codex/windows-m06-virtio-serial-control` | Host-side virtio-serial/QEMU pipe transport, QEMU control chardev wiring, guest transport selection, focused tests, and self-hosted WHPX smoke validation are in place. |
-| M07 Guest ready handshake | In progress | Codex | `codex/windows-m07-guest-ready-handshake` | Control transport is available; implementing protocol-level ready over the established stream. |
-| M08 Exec command | Blocked by M07 | TBD | TBD | First useful guest operation. |
+| M07 Guest ready handshake | Done | Codex | `codex/windows-m07-guest-ready-handshake` | Protocol-level `GuestReady` over the established virtio-serial control stream is implemented and validated by fake/unit tests plus self-hosted WHPX smoke. |
+| M08 Exec command | Not started | TBD | TBD | First useful guest operation; now unblocked by M07 readiness. |
 | M09 Copy-in/copy-out data plane | Blocked by M08 | TBD | TBD | Requires guest file protocol. |
 | M10 Mount MVP semantics | Blocked by M09 | TBD | TBD | Uses copy/import/export semantics first. |
-| M11 Port forwarding | Blocked by M07 | TBD | TBD | Preserve no-network default. |
+| M11 Port forwarding | Not started | TBD | TBD | Later milestone; preserve no-network default. |
 | M12 Network policy and proxy integration | Blocked by M08/M11 | TBD | TBD | Strict egress; no QEMU NAT by default. |
 | M13 Checkpoint/store MVP | Blocked by M09/M10 | TBD | TBD | Simple disk artifact path first. |
 | M14 Node packaging | Blocked by core CLI smoke | TBD | TBD | Windows package after Rust backend. |
@@ -42,9 +42,9 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 
 ## Current known blockers
 
-- Windows VM startup now attempts direct Linux boot with the M06 virtio-serial control chardev enabled. It runs QEMU discovery/preflight, builds WHPX direct-boot argv, launches through the existing QEMU supervisor, connects the QEMU-created control pipe during boot, captures serial/stdout/stderr/preflight/status artifacts, and returns M06 boot success only after QEMU remains alive through the boot observation window and `serial.log` contains both `lsb-guest: using virtio-serial control transport` and `lsb-guest: virtio-serial control port opened`. Guest readiness, public CLI/SDK exec, networking, mounts, checkpoints, and Node packaging remain unsupported.
+- Windows VM startup now attempts direct Linux boot with the M06 virtio-serial control chardev enabled. It runs QEMU discovery/preflight, builds WHPX direct-boot argv, launches through the existing QEMU supervisor, connects the QEMU-created control pipe during boot, captures serial/stdout/stderr/preflight/status artifacts, and returns success only after receiving a valid LocalSandbox `GuestReady` protocol frame over the established control stream. Public CLI/SDK exec, file APIs, networking, mounts, checkpoints, and Node packaging remain unsupported.
 - QEMU 11.0.50 on the self-hosted Windows WHPX runner blocks boot until a host client connects to the `-chardev pipe` endpoint. M06 now connects the pipe immediately after QEMU process start and stores the established stream on the running boot object; later `PlatformVm::connect_control()` clones that stream. See D021.
-- Guest ready handshake, public command execution, file APIs, muxing, port forwarding, networking, mounts, checkpoints, and Node packaging remain later milestones. `lsb-guest` can select `lsb.transport=virtio-serial` and open the configured virtio port, but no `GuestReady` frame is emitted in M06 and the public SDK streaming helpers still return explicit later-milestone errors on Windows.
+- Public command execution, file APIs, muxing, port forwarding, networking, mounts, checkpoints, and Node packaging remain later milestones. `lsb-guest` emits `GuestReady` only on the Windows virtio-serial transport path; existing macOS/vsock behavior remains unchanged.
 - Full `cargo check --workspace --target x86_64-pc-windows-msvc` from this macOS host is blocked by external Windows C/assembler tooling for transitive crates (`ring` needs Windows/MSVC headers such as `assert.h`; `blake3` needs `ml64.exe`). The changed `lsb-platform` crate passes a targeted Windows compile check; run the full workspace check on a Windows/MSVC runner.
 - The current safe host probe verifies target OS/arch and can report a supplied Windows major version. The standard host implementation does not yet query the native Windows build number without adding Windows API or registry probing.
 
@@ -65,10 +65,11 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - 2026-07-04: Implemented manual hardware workflow boot asset provisioning for smoke/e2e. Added Linux `prepare-boot-assets` job with exact source-derived cache, same-run boot asset artifact, Windows persistent cache hydration under `C:\lsb-assets\by-key\<asset-key>\`, disposable per-run rootfs copy, and runner/validation documentation.
 - 2026-07-04: Optimized smoke/e2e boot asset reuse for the single persistent Windows runner. The workflow now probes `C:\lsb-assets\by-key\<asset-key>\` first and skips the Linux prepare/upload plus Windows artifact download on a validated local hit; misses still hydrate the local cache from the Linux same-run artifact.
 - 2026-07-04: Fixed the first provisioned M05 smoke failure by changing the WHPX direct boot CPU model from `max` to `Westmere`, based on QEMU stderr APX/MPX conflicts and `WHPX: Unexpected VP exit code 4` in run `28696602575`. Also staged external Windows diagnostics into `target/windows-lsb-diagnostics` before artifact upload.
+- 2026-07-04: Completed M07 guest ready handshake. Added the platform-neutral `GuestReady` protocol frame, Windows guest emission after virtio-serial init, host-side wait over the established M06 control stream, protocol/timeout/early-exit/unsupported-capability errors, `boot.status.json` guest-ready diagnostics, and protocol/fake-transport tests. No exec, file, mount, network, port forwarding, or checkpoint behavior was implemented.
 
 ## Active implementation notes
 
-- 2026-07-04: Started M07 on `codex/windows-m07-guest-ready-handshake`; scope is the protocol-level LocalSandbox guest-ready frame, guest emission after minimal init, Windows host wait over the established M06 control stream, readiness diagnostics, and focused protocol/fake-transport tests. Exec, file APIs, mounts, networking, port forwarding, checkpoints, and Node packaging remain later milestones.
+- 2026-07-04: M07 readiness is defined as a valid LocalSandbox `GuestReady` frame received over the established Windows virtio-serial control stream. `boot.status.json` records `state: "guest_ready"`, `success_definition: "localsandbox_guest_ready_frame_received_over_control_transport"`, elapsed readiness time, and the ready payload metadata. The initial Windows capability set is intentionally empty.
 - 2026-07-04: Started M06 on `codex/windows-m06-virtio-serial-control`; scope is the Windows virtio-serial host endpoint, QEMU control chardev wiring, a platform-neutral host control stream abstraction, guest virtio-serial port discovery/opening, and focused tests/docs. Guest ready handshake, exec/file API parity, muxing, mounts, networking, checkpoints, and Node packaging remain later milestones unless already supported by existing code paths.
 - 2026-07-04: Implemented M06 review slice. Added `PlatformControlStream` and `PlatformVm::connect_control`, a Windows `VirtioSerialControlEndpoint` with random per-instance QEMU pipe names and bounded open retry/error mapping, Windows backend lifecycle wiring that adds the control chardev to direct-boot argv, shared `lsb-proto` virtio-serial port-name constant, guest `lsb.transport=virtio-serial` selection with `/dev/virtio-ports` then `/sys/class/virtio-ports` discovery, and in-memory frame/endpoint/discovery tests. The host endpoint is tied to the running QEMU boot object; stream cleanup is by handle drop and QEMU cleanup remains owned by the existing supervisor/Job Object path.
 - 2026-07-04: Completed M06 ordering validation. Initial self-hosted smoke with the virtio-serial chardev but no early host pipe client produced empty serial output, confirming QEMU pipe chardev startup blocks until a client connects. The Windows boot lifecycle now opens the control pipe immediately after QEMU starts, keeps the established `PlatformControlStream`, and clones it for later `connect_control()` calls. Passing run `28701999114` showed argv with `virtio-serial-pci`, `virtserialport`, `lsb.transport=virtio-serial`, `-nic none`, and serial lines showing `lsb-guest` selected virtio-serial and opened `/dev/vport1p1`.
@@ -100,6 +101,9 @@ Append newest entries at the top.
 
 | Date | Milestone | Platform | Command / test | Result | Notes |
 |---|---|---|---|---|---|
+| 2026-07-04 | M07 | Windows self-hosted | `./scripts/win-gh-test smoke` | Pass | Run `28703154530`, Windows smoke/e2e job `85125213672`, commit `f4b7420`, artifact `windows-lsb-diagnostics` ID `8080915182`. The smoke boot reached protocol readiness: `boot.status.json` in `lsb-assets-work/28703154530-1` recorded `state: "guest_ready"`, success definition `localsandbox_guest_ready_frame_received_over_control_transport`, elapsed readiness `1727` ms, protocol version `1`, transport `virtio_serial`, guest version `0.3.12`, and empty capabilities. The redacted argv still used `-nic none`. The workflow prepared boot assets on a cache miss, then the smoke step passed; Windows e2e remained skipped for this milestone. |
+| 2026-07-04 | M07 | Windows self-hosted | `./scripts/win-gh-test unit` | Pass | Run `28703121030`, Windows check/unit job `85124342646`, commit `f4b7420`. The self-hosted unit lane completed successfully, covering the Windows-target fake readiness tests without requiring a real QEMU boot. |
+| 2026-07-04 | M07 | macOS | `cargo fmt --all -- --check`; `cargo check --workspace`; `cargo test -p lsb-proto`; `cargo test -p lsb-guest`; `cargo test -p lsb-platform`; `cargo test -p lsb-vm`; `cargo check -p lsb-platform --tests --target x86_64-pc-windows-msvc`; `cargo test --workspace`; `cargo check --workspace --target x86_64-pc-windows-msvc` | Pass / blocked | Format, workspace check, focused proto/guest/platform/vm tests, targeted Windows `lsb-platform` test compile, and full workspace tests passed. `cargo test -p lsb-platform` covered ready success, timeout without ready, invalid frame type, protocol version mismatch, unsupported capabilities, early QEMU exit, and boot-status success artifact handling. Full workspace Windows target check remains blocked on this macOS host by external MSVC C/assembler tooling: `ring` cannot find Windows/MSVC `assert.h`, and `blake3` cannot find `ml64.exe`. |
 | 2026-07-04 | M06 review follow-up | Windows self-hosted | `./scripts/win-gh-test smoke` + direct `gh run watch 28702513259 --exit-status` | Pass | Run `28702513259`, Windows smoke/e2e job `85122795112`, commit `5f1dcbf`, artifact `windows-lsb-diagnostics` ID `8080640442`. The helper initially matched the previous unit run with the same head SHA, so the new smoke run was watched directly. Cached boot assets were used; `windows_qemu_boot_smoke` passed the stricter M06 serial evidence assertions. Downloaded diagnostics showed `boot.status.json` state `virtio_serial_control_observed_alive`, success definition `qemu_process_alive_with_serial_output_and_virtio_serial_control_port_opened`, argv with `virtio-serial-pci`, `virtserialport`, `lsb.transport=virtio-serial`, and `-nic none`, and `serial.log` lines `lsb-guest: using virtio-serial control transport 'org.localsandbox.control'` plus `lsb-guest: virtio-serial control port opened at /dev/vport1p1`. |
 | 2026-07-04 | M06 review follow-up | Windows self-hosted | `./scripts/win-gh-test unit` | Pass | Run `28702482071`, Windows check/unit job `85122675663`, commit `5f1dcbf`, artifact `windows-lsb-diagnostics` ID `8080623714`. This addresses the missing self-hosted unit evidence for the Windows-code branch; the workflow unit lane ran Cargo unit tests successfully. |
 | 2026-07-04 | M06 review follow-up | macOS | `cargo fmt --all -- --check`; `cargo test -p lsb-platform windows_x86_64::qemu::boot -- --nocapture`; `cargo check --workspace`; `cargo test --workspace`; `cargo check -p lsb-platform --tests --target x86_64-pc-windows-msvc`; `git diff --check` | Pass | Local validation for stricter M06 boot evidence and stale-error-text fixes. Added unit coverage for missing virtio-serial open evidence failing with `serial_evidence_missing` and complete guest evidence passing. Workspace tests passed with 65 `lsb-platform` tests passing and 2 ignored hardware hooks. |
@@ -176,6 +180,7 @@ Append newest entries at the top.
 - [x] Wire private M04 `QemuSupervisor` into the Windows backend start path during M05 without claiming readiness before the direct boot smoke path exists.
 - [x] Use M05 per-instance artifact layout to decide whether `qemu.argv.redacted.txt` should become structured JSON or remain a redacted text command display.
 - [x] Manually dispatch `./scripts/win-gh-test smoke` and confirm the workflow-provisioned disposable boot assets run `windows_qemu_boot_smoke` instead of skipping.
+- [x] Replace M06 serial-marker boot success with the M07 LocalSandbox `GuestReady` protocol handshake over the established virtio-serial control stream.
 - [ ] Decide exact hidden/debug flag name for TCG once CLI command parsing is inspected.
 - [ ] Decide exact QEMU minimum version after M02 preflight experimentation.
 - [ ] Decide whether native Windows build-number probing should use a Windows API, registry query, or remain deferred until a CLI diagnostics command exists.

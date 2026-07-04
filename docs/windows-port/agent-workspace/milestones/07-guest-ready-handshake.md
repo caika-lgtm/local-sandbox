@@ -1,6 +1,6 @@
 # M07: Guest Ready Handshake
 
-Status: In progress
+Status: Done
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -41,10 +41,10 @@ The specific tests should match the implementation, but this milestone must incl
 
 ## Acceptance criteria
 
-- [ ] Ready succeeds on boot smoke.
-- [ ] Wrong/missing ready message times out cleanly.
-- [ ] Capabilities are logged without secrets.
-- [ ] macOS path either uses same handshake or remains compatible by explicit design.
+- [x] Ready succeeds on boot smoke.
+- [x] Wrong/missing ready message times out cleanly.
+- [x] Capabilities are logged without secrets.
+- [x] macOS path either uses same handshake or remains compatible by explicit design.
 
 ## Coding-agent prompt
 
@@ -67,10 +67,18 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 
 ## Handoff
 
-- Branch/PR: TBD
-- Summary: TBD
-- Tests run: TBD
-- Debug artifacts: TBD
-- New decisions: TBD
-- New risks: TBD
-- Next milestone: TBD
+- Branch/PR: `codex/windows-m07-guest-ready-handshake`
+- Summary: Added a platform-neutral `GuestReady` frame, emitted it from `lsb-guest` on the Windows virtio-serial transport after minimal init, and changed the Windows boot lifecycle to wait for that frame before reporting VM startup success. Readiness failures now distinguish early QEMU exit, missing/failed control transport, protocol/invalid-frame errors, timeout, and unsupported reported capabilities. The initial Windows capability list is empty.
+- Tests run: `cargo fmt --all -- --check`; `cargo check --workspace`; `cargo test -p lsb-proto`; `cargo test -p lsb-guest`; `cargo test -p lsb-platform`; `cargo test -p lsb-vm`; `cargo check -p lsb-platform --tests --target x86_64-pc-windows-msvc`; `cargo test --workspace`; `./scripts/win-gh-test unit`; `./scripts/win-gh-test smoke`.
+- Debug artifacts: Windows smoke run `28703154530`, job `85125213672`, artifact `windows-lsb-diagnostics` ID `8080915182`. `lsb-assets-work/28703154530-1/boot.status.json` recorded `state: "guest_ready"`, success definition `localsandbox_guest_ready_frame_received_over_control_transport`, elapsed readiness `1727` ms, protocol version `1`, transport `virtio_serial`, guest version `0.3.12`, and empty capabilities. The same diagnostics include `qemu.argv.redacted.txt`, `qemu.stdout.log`, `qemu.stderr.log`, `serial.log`, `preflight.json`, and `qemu.status.json`.
+- New decisions: None; this follows the RFC guidance to use the LocalSandbox protocol over the M06 transport rather than QMP or ad hoc Windows bytes.
+- New risks: None added.
+- Next milestone: M08 exec command.
+
+Security review:
+- No-network default preserved: yes
+- Secret redaction verified: yes
+- Host file exposure reviewed: n/a
+- Control/QMP endpoint privacy reviewed: yes
+- Process cleanup reviewed: yes
+- New risks added to risk-register.md: no

@@ -67,8 +67,8 @@ Hardware workflow:
 | M03 | Golden argv tests for minimal boot, serial logs, virtio-serial, QMP, no-network default. |
 | M04 | Fake process and Windows Job Object cleanup tests where possible. |
 | M05 | WHPX boot smoke: QEMU starts with provisioned boot assets, serial/QEMU artifact files are captured, and QEMU stays alive through the M05 observation window with non-empty serial evidence such as kernel, `/init`, rootfs mount, or `lsb-guest` startup lines. Empty serial output must fail with actionable serial/stderr artifacts. The guest-ready handshake remains M06/M07 work. |
-| M06 | Host can open virtio-serial transport; guest accepts framed protocol connection. |
-| M07 | Ready handshake succeeds and times out cleanly on failure. |
+| M06 | Host can open virtio-serial transport; guest selects virtio-serial and opens the configured control port. |
+| M07 | LocalSandbox `GuestReady` frame is received over the established virtio-serial control stream before VM startup succeeds; fake/unit tests cover timeout, invalid frame, protocol-version mismatch, unsupported capabilities, and early QEMU exit without requiring real QEMU. |
 | M08 | `exec` command returns stdout/stderr/exit status; kill/timeout behavior tested. |
 | M09 | Copy-in/copy-out tests for files, dirs, empty dirs, large files, path traversal rejection. |
 | M10 | Mount MVP conformance tests for read-only source semantics and isolated writes. |
@@ -134,6 +134,7 @@ $env:LSB_WINDOWS_BOOT_KERNEL="C:\path\to\Image"
 $env:LSB_WINDOWS_BOOT_INITRD="C:\path\to\initramfs.cpio.gz"
 $env:LSB_WINDOWS_BOOT_ROOTFS="C:\path\to\disposable\rootfs.ext4"
 $env:LSB_WINDOWS_BOOT_ARTIFACT_DIR="C:\path\to\diagnostics" # optional
+$env:LSB_WINDOWS_GUEST_READY_SECS="30" # optional M07 readiness timeout override
 ```
 
 If the asset variables are absent, the smoke lane must print an explicit skip
