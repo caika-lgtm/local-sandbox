@@ -965,12 +965,29 @@ mod tests {
 
             let mut config =
                 WindowsQemuBootConfig::new(kernel, initrd, rootfs, 2 * 1024 * 1024 * 1024, 2);
+            let control_endpoint = VirtioSerialControlEndpoint::for_instance(&artifact_dir)
+                .expect("smoke control endpoint name should be valid");
             config.artifact_directory = Some(artifact_dir);
             config.boot_observation_timeout = timeout;
             config.diagnostic_label = Some("windows-qemu-boot-smoke".to_string());
+            config.control_endpoint = Some(control_endpoint);
 
             let mut boot = launch_windows_qemu_boot(config)
                 .expect("QEMU should stay alive and produce serial output during boot smoke");
+            let argv = fs::read_to_string(&boot.artifacts().process.argv_redacted)
+                .expect("redacted QEMU argv should be readable");
+            assert!(
+                argv.contains("virtio-serial-pci"),
+                "redacted argv should contain virtio-serial controller: {argv}"
+            );
+            assert!(
+                argv.contains("virtserialport"),
+                "redacted argv should contain virtio-serial control port: {argv}"
+            );
+            assert!(
+                argv.contains("lsb.transport=virtio-serial"),
+                "kernel cmdline should select virtio-serial transport: {argv}"
+            );
             let serial = fs::read(&boot.artifacts().serial).expect("serial log should be readable");
             assert!(
                 !serial.is_empty(),
