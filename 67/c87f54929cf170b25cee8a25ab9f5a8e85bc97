@@ -1,0 +1,21 @@
+docs/windows-port/agent-workspace/milestones/07-guest-ready-handshake.md
+  s_899b77c54d595f::t_e78cc9da1c897a 3
+docs/windows-port/agent-workspace/state.md
+  s_899b77c54d595f::t_e78cc9da1c897a 6-7,15,19,31,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "67c87f54929cf170b25cee8a25ab9f5a8e85bc97",
+  "prompts": {},
+  "sessions": {
+    "s_899b77c54d595f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2c96-9b6b-7aa2-b341-e35df897de82",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
