@@ -3,8 +3,8 @@
 Last updated: 2026-07-04
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M08 - Exec command
-Overall status: M08 complete; M09 not started
+Current milestone: M09 - Copy-in/copy-out data plane
+Overall status: M09 in progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m08-exec-command`
+- Branch: `codex/windows-m09-copy-in-copy-out`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `c063f22`
-- End commit: `4677eb6` (validated implementation head; final state update is docs-only)
+- Start commit: `f8b4903`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -30,7 +30,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M06 Virtio-serial control transport | Done | Codex | `codex/windows-m06-virtio-serial-control` | Host-side virtio-serial/QEMU pipe transport, QEMU control chardev wiring, guest transport selection, focused tests, and self-hosted WHPX smoke validation are in place. |
 | M07 Guest ready handshake | Done | Codex | `codex/windows-m07-guest-ready-handshake` | Protocol-level `GuestReady` over the established virtio-serial control stream is implemented and validated by fake/unit tests plus self-hosted WHPX smoke. |
 | M08 Exec command | Done | Codex | `codex/windows-m08-exec-command` | Non-interactive exec over the established virtio-serial control stream is implemented and validated by fake/unit tests plus self-hosted WHPX smoke. |
-| M09 Copy-in/copy-out data plane | Not started | TBD | TBD | Requires guest file protocol. |
+| M09 Copy-in/copy-out data plane | In progress | Codex | `codex/windows-m09-copy-in-copy-out` | Implementing safe Windows copy-in/copy-out data-plane helpers and guest file protocol wiring. |
 | M10 Mount MVP semantics | Blocked by M09 | TBD | TBD | Uses copy/import/export semantics first. |
 | M11 Port forwarding | Not started | TBD | TBD | Later milestone; preserve no-network default. |
 | M12 Network policy and proxy integration | Blocked by M11 | TBD | TBD | Strict egress; no QEMU NAT by default. |
