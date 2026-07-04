@@ -3,8 +3,8 @@
 Last updated: 2026-07-04
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M05 - Direct Linux boot and serial logs
-Overall status: Done
+Current milestone: M06 - Virtio-serial control transport
+Overall status: In progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m05-direct-linux-boot-serial-logs`
+- Branch: `codex/windows-m06-virtio-serial-control`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `2023e10`
-- End commit: M05 direct boot smoke fix/docs commits on `codex/windows-m05-direct-linux-boot-serial-logs`
+- Start commit: current branch head after M05 direct boot smoke fix/docs commits
+- End commit: TBD
 
 ## Milestone status table
 
@@ -27,7 +27,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M03 QEMU argv builder | Done | Codex | `codex/windows-m03-qemu-argv-builder` | Typed deterministic QEMU argv construction, sanitized diagnostics, and golden tests are in place. |
 | M04 QEMU process lifecycle | Done | Codex | `codex/windows-m04-qemu-lifecycle` | Private QEMU supervisor can spawn, monitor, terminate, write lifecycle artifacts, and use Windows Job Object cleanup; not wired to public VM startup and no guest boot. |
 | M05 Direct Linux boot and serial logs | Done | Codex | `codex/windows-m05-direct-linux-boot-serial-logs` | Direct boot path, serial/QEMU artifacts, boot observation timeout, workflow boot asset provisioning, and provisioned self-hosted WHPX smoke evidence are in place. |
-| M06 Virtio-serial control transport | Not started | TBD | TBD | Requires bootable guest and QEMU chardev. |
+| M06 Virtio-serial control transport | In progress | Codex | `codex/windows-m06-virtio-serial-control` | Host-side virtio-serial/QEMU pipe transport and guest transport selection are being implemented. |
 | M07 Guest ready handshake | Blocked by M06 | TBD | TBD | Requires control transport. |
 | M08 Exec command | Blocked by M07 | TBD | TBD | First useful guest operation. |
 | M09 Copy-in/copy-out data plane | Blocked by M08 | TBD | TBD | Requires guest file protocol. |
@@ -67,6 +67,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 
 ## Active implementation notes
 
+- 2026-07-04: Started M06 on `codex/windows-m06-virtio-serial-control`; scope is the Windows virtio-serial host endpoint, QEMU control chardev wiring, a platform-neutral host control stream abstraction, guest virtio-serial port discovery/opening, and focused tests/docs. Guest ready handshake, exec/file API parity, muxing, mounts, networking, checkpoints, and Node packaging remain later milestones unless already supported by existing code paths.
 - 2026-07-03: M01 started on `codex/windows-m01-compile-stubs` from `3501c2b`; scope is compile scaffolding only, with no QEMU discovery/startup or runtime feature implementation.
 - 2026-07-03: M01 placed Windows x86_64 scaffolding under `crates/lsb-platform/src/windows_x86_64/{backend.rs,config.rs,errors.rs}`. The stub VM can be constructed but `start`, `stop`, and guest control transport return explicit unsupported errors.
 - 2026-07-03: Windows proxy networking (`M12`), NBD/CAS storage transport (`M13`), port forwarding (`M11`), shell/exec control transport (`M06`/`M08`), and prune process-liveness checks fail closed instead of opening listeners/devices or guessing behavior.
