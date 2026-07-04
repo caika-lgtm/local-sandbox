@@ -100,6 +100,7 @@ pub(crate) struct WindowsQemuBoot {
     artifacts: QemuBootArtifacts,
     observation_timeout: Duration,
     control_endpoint: Option<VirtioSerialControlEndpoint>,
+    control_stream: Option<crate::PlatformControlStream>,
 }
 
 impl WindowsQemuBoot {
@@ -122,11 +123,15 @@ impl WindowsQemuBoot {
     pub(crate) fn open_control(
         &self,
     ) -> Result<crate::PlatformControlStream, VirtioSerialControlError> {
-        let endpoint = self
-            .control_endpoint
+        let stream = self
+            .control_stream
             .as_ref()
             .ok_or(VirtioSerialControlError::EndpointUnavailable)?;
-        endpoint.open()
+        stream
+            .try_clone()
+            .map_err(|error| VirtioSerialControlError::OpenFailed {
+                detail: format!("failed to clone the established control pipe handle: {error}"),
+            })
     }
 
     pub(crate) fn stop(&mut self) -> Result<Option<QemuExitStatus>, QemuBootError> {
@@ -149,6 +154,7 @@ pub(crate) enum QemuBootErrorKind {
     Preflight,
     Argv,
     ProcessStart,
+    ControlOpen,
     ProcessStatus,
     GuestBootExited,
     SerialOutputMissing,
@@ -165,6 +171,7 @@ impl QemuBootErrorKind {
             Self::Preflight => "preflight",
             Self::Argv => "argv",
             Self::ProcessStart => "process_start",
+            Self::ControlOpen => "control_open",
             Self::ProcessStatus => "process_status",
             Self::GuestBootExited => "guest_boot_exited",
             Self::SerialOutputMissing => "serial_output_missing",
@@ -209,6 +216,10 @@ pub(crate) enum QemuBootError {
         source: QemuProcessError,
         artifacts: QemuBootArtifacts,
     },
+    ControlOpen {
+        source: VirtioSerialControlError,
+        artifacts: QemuBootArtifacts,
+    },
     ProcessStatus {
         source: QemuProcessError,
         artifacts: QemuBootArtifacts,
@@ -240,6 +251,7 @@ impl QemuBootError {
             Self::Preflight { .. } => QemuBootErrorKind::Preflight,
             Self::Argv { .. } => QemuBootErrorKind::Argv,
             Self::ProcessStart { .. } => QemuBootErrorKind::ProcessStart,
+            Self::ControlOpen { .. } => QemuBootErrorKind::ControlOpen,
             Self::ProcessStatus { .. } => QemuBootErrorKind::ProcessStatus,
             Self::GuestBootExited { .. } => QemuBootErrorKind::GuestBootExited,
             Self::SerialOutputMissing { .. } => QemuBootErrorKind::SerialOutputMissing,
@@ -254,6 +266,7 @@ impl QemuBootError {
             | Self::Preflight { artifacts, .. }
             | Self::Argv { artifacts, .. }
             | Self::ProcessStart { artifacts, .. }
+            | Self::ControlOpen { artifacts, .. }
             | Self::ProcessStatus { artifacts, .. }
             | Self::GuestBootExited { artifacts, .. }
             | Self::SerialOutputMissing { artifacts, .. }
@@ -325,6 +338,11 @@ impl fmt::Display for QemuBootError {
                 "failed to start Windows QEMU direct boot: {source}.{}",
                 self.artifact_sentence()
             ),
+            Self::ControlOpen { source, .. } => write!(
+                f,
+                "failed to connect the Windows virtio-serial control pipe during QEMU boot: {source}.{}",
+                self.artifact_sentence()
+            ),
             Self::ProcessStatus { source, .. } => write!(
                 f,
                 "failed while observing Windows QEMU boot status: {source}.{}",
@@ -371,6 +389,7 @@ impl std::error::Error for QemuBootError {
             Self::Preflight { source, .. } => Some(source),
             Self::Argv { source, .. } => Some(source),
             Self::ProcessStart { source, .. } => Some(source),
+            Self::ControlOpen { source, .. } => Some(source),
             Self::ProcessStatus { source, .. } => Some(source),
             Self::StopFailed { source, .. } => Some(source),
             _ => None,
@@ -443,6 +462,23 @@ pub(crate) fn launch_windows_qemu_boot(
         error
     })?;
 
+    let control_stream = if let Some(endpoint) = &config.control_endpoint {
+        match endpoint.open() {
+            Ok(stream) => Some(stream),
+            Err(source) => {
+                let error = QemuBootError::ControlOpen {
+                    source,
+                    artifacts: artifacts.clone(),
+                };
+                record_failure(&artifacts, config.boot_observation_timeout, &error);
+                let _ = supervisor.terminate();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+
     if let Err(error) = observe_boot(&mut supervisor, &artifacts, config.boot_observation_timeout) {
         record_failure(&artifacts, config.boot_observation_timeout, &error);
         return Err(error);
@@ -461,6 +497,7 @@ pub(crate) fn launch_windows_qemu_boot(
         artifacts,
         observation_timeout: config.boot_observation_timeout,
         control_endpoint: config.control_endpoint,
+        control_stream,
     })
 }
 
