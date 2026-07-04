@@ -1544,6 +1544,37 @@ mod tests {
         let _ = fs::remove_dir_all(artifact_dir);
     }
 
+    #[test]
+    fn boot_status_success_artifact_records_guest_ready_details() {
+        let artifact_dir = temp_dir("ready-status");
+        let artifacts = QemuBootArtifacts::new(&artifact_dir);
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should be writable");
+        let ready = GuestReady::new(GuestTransport::VirtioSerial, "guest-test");
+
+        write_boot_status_file(
+            &artifacts,
+            "guest_ready",
+            GUEST_READY_SUCCESS_DEFINITION,
+            Duration::from_secs(30),
+            Some(1234),
+            Some(&ready),
+            None,
+            None,
+        )
+        .expect("ready status should write");
+
+        let status = fs::read_to_string(&artifacts.boot_status).expect("status artifact");
+        assert!(status.contains("\"state\": \"guest_ready\""));
+        assert!(status.contains(GUEST_READY_SUCCESS_DEFINITION));
+        assert!(status.contains("\"elapsed_ms\": 1234"));
+        assert!(status.contains("\"protocol_version\": 1"));
+        assert!(status.contains("\"transport\": \"virtio_serial\""));
+        assert!(status.contains("\"guest_version\": \"guest-test\""));
+        assert!(status.contains("\"capabilities\": []"));
+
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
     fn guest_ready_frame(ready: &GuestReady) -> Cursor<Vec<u8>> {
         let mut stream = Cursor::new(Vec::new());
         frame::send_json(&mut stream, frame::GUEST_READY, ready)
@@ -1677,6 +1708,36 @@ mod tests {
         assert_eq!(err.kind(), QemuBootErrorKind::GuestReadyProtocol);
         assert!(err.to_string().contains("type 0x02"));
         assert!(err.to_string().contains("expected GUEST_READY"));
+
+        supervisor
+            .terminate()
+            .expect("fake supervisor should terminate");
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn wait_for_guest_ready_rejects_protocol_version_mismatch() {
+        let artifact_dir = temp_dir("ready-version-mismatch");
+        let artifacts = QemuBootArtifacts::new(&artifact_dir);
+        prepare_artifacts(&artifacts).expect("artifacts should prepare");
+        let mut ready = GuestReady::new(GuestTransport::VirtioSerial, "guest-test");
+        ready.protocol_version = lsb_proto::PROTOCOL_VERSION + 1;
+        let mut supervisor = fake_supervisor("sleep", artifact_dir.clone());
+        supervisor.start().expect("fake supervisor should start");
+
+        let err = wait_for_guest_ready(
+            &mut supervisor,
+            &artifacts,
+            Duration::from_secs(1),
+            guest_ready_frame(&ready),
+            GuestTransport::VirtioSerial,
+        )
+        .expect_err("protocol version mismatch should fail readiness");
+
+        assert_eq!(err.kind(), QemuBootErrorKind::GuestReadyProtocol);
+        assert!(err
+            .to_string()
+            .contains("unsupported guest protocol version"));
 
         supervisor
             .terminate()
