@@ -1,0 +1,21 @@
+docs/windows-port/agent-workspace/milestones/06-virtio-serial-control-transport.md
+  s_3e9dd14c1056d7::t_2ee8e6e51c800e 46,72-74
+docs/windows-port/agent-workspace/state.md
+  s_3e9dd14c1056d7::t_5dceacf9d6d627 19,45,74,102-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b062c7d1a0114a1e2cd4faab9c2e4daef8cdcd85",
+  "prompts": {},
+  "sessions": {
+    "s_3e9dd14c1056d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2c4a-9cc5-7dd2-bda8-3a2c381848a2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
