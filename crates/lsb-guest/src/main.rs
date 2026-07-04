@@ -1,10 +1,158 @@
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod control_transport {
+    use std::path::{Path, PathBuf};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum GuestControlTransport {
+        Vsock,
+        VirtioSerial,
+    }
+
+    pub(crate) fn from_kernel_cmdline(cmdline: &str) -> GuestControlTransport {
+        if cmdline
+            .split_ascii_whitespace()
+            .any(|arg| arg == "lsb.transport=virtio-serial")
+        {
+            GuestControlTransport::VirtioSerial
+        } else {
+            GuestControlTransport::Vsock
+        }
+    }
+
+    pub(crate) fn discover_virtio_serial_device(
+        dev_root: &Path,
+        sys_class_root: &Path,
+        port_name: &str,
+    ) -> std::io::Result<Option<PathBuf>> {
+        let preferred = dev_root.join("virtio-ports").join(port_name);
+        if preferred.exists() {
+            return Ok(Some(preferred));
+        }
+
+        let entries = match std::fs::read_dir(sys_class_root) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        for entry in entries {
+            let entry = entry?;
+            let name_path = entry.path().join("name");
+            let Ok(name) = std::fs::read_to_string(&name_path) else {
+                continue;
+            };
+            if name.trim() == port_name {
+                return Ok(Some(dev_root.join(entry.file_name())));
+            }
+        }
+
+        Ok(None)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn temp_root(label: &str) -> PathBuf {
+            std::env::temp_dir().join(format!(
+                "lsb-guest-transport-{label}-{}",
+                std::process::id()
+            ))
+        }
+
+        #[test]
+        fn cmdline_selects_virtio_serial_only_when_requested() {
+            assert_eq!(
+                from_kernel_cmdline("console=ttyS0 root=/dev/vda rw"),
+                GuestControlTransport::Vsock
+            );
+            assert_eq!(
+                from_kernel_cmdline(
+                    "console=ttyS0 root=/dev/vda rw lsb.transport=virtio-serial"
+                ),
+                GuestControlTransport::VirtioSerial
+            );
+        }
+
+        #[test]
+        fn virtio_serial_discovery_prefers_dev_virtio_ports_symlink() {
+            let root = temp_root("preferred");
+            let dev_root = root.join("dev");
+            let sys_root = root.join("sys/class/virtio-ports");
+            let preferred = dev_root
+                .join("virtio-ports")
+                .join(lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME);
+            std::fs::create_dir_all(preferred.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(&sys_root).unwrap();
+            std::fs::write(&preferred, b"").unwrap();
+
+            let discovered = discover_virtio_serial_device(
+                &dev_root,
+                &sys_root,
+                lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+            )
+            .unwrap();
+
+            assert_eq!(discovered, Some(preferred));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn virtio_serial_discovery_falls_back_to_sysfs_name() {
+            let root = temp_root("sysfs");
+            let dev_root = root.join("dev");
+            let sys_root = root.join("sys/class/virtio-ports");
+            let port = sys_root.join("vport0p1");
+            std::fs::create_dir_all(&port).unwrap();
+            std::fs::create_dir_all(&dev_root).unwrap();
+            std::fs::write(
+                port.join("name"),
+                format!("{}\n", lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME),
+            )
+            .unwrap();
+
+            let discovered = discover_virtio_serial_device(
+                &dev_root,
+                &sys_root,
+                lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+            )
+            .unwrap();
+
+            assert_eq!(discovered, Some(dev_root.join("vport0p1")));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        #[test]
+        fn virtio_serial_discovery_reports_absent_port() {
+            let root = temp_root("absent");
+            let dev_root = root.join("dev");
+            let sys_root = root.join("sys/class/virtio-ports");
+            std::fs::create_dir_all(&dev_root).unwrap();
+
+            let discovered = discover_virtio_serial_device(
+                &dev_root,
+                &sys_root,
+                lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+            )
+            .unwrap();
+
+            assert_eq!(discovered, None);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod guest {
+    use std::fs::{File, OpenOptions};
     use std::io::{Read, Write};
-    use std::os::unix::io::FromRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
     use std::os::unix::process::CommandExt;
+    use std::path::Path;
     use std::process::{Command, Stdio};
+    use std::time::Duration;
 
+    use super::control_transport::{self, GuestControlTransport};
     use lsb_proto::frame;
     use lsb_proto::{
         ChmodRequest, CopyRequest, DirEntry, ExecRequest, ForwardRequest, ForwardResponse,
@@ -13,6 +161,30 @@ mod guest {
         WatchRequest, WriteFileRequest, WriteFileResponse,
     };
     use lsb_proto::{VSOCK_PORT, VSOCK_PORT_FORWARD};
+
+    trait ControlStream: Read + Write + AsRawFd + IntoRawFd + Send + 'static {
+        fn try_clone_stream(&self) -> std::io::Result<Self>
+        where
+            Self: Sized;
+
+        fn configure_for_lsb(&self) {}
+    }
+
+    impl ControlStream for std::net::TcpStream {
+        fn try_clone_stream(&self) -> std::io::Result<Self> {
+            self.try_clone()
+        }
+
+        fn configure_for_lsb(&self) {
+            let _ = self.set_nodelay(true);
+        }
+    }
+
+    impl ControlStream for File {
+        fn try_clone_stream(&self) -> std::io::Result<Self> {
+            self.try_clone()
+        }
+    }
 
     fn mount_fs(source: &str, target: &str, fstype: &str, data: Option<&str>) -> bool {
         mount_fs_with_flags(source, target, fstype, 0, data)
@@ -327,11 +499,24 @@ mod guest {
         }
     }
 
-    fn handle_connection(fd: i32) {
-        // SAFETY: fd is a valid socket from accept()
+    fn handle_vsock_connection(fd: RawFd) {
+        // SAFETY: fd is a valid socket from accept().
         let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
-        let _ = stream.set_nodelay(true);
-        let mut reader = stream.try_clone().expect("failed to clone stream");
+        handle_control_stream(stream);
+    }
+
+    fn handle_control_stream<S>(stream: S)
+    where
+        S: ControlStream,
+    {
+        stream.configure_for_lsb();
+        let mut reader = match stream.try_clone_stream() {
+            Ok(reader) => reader,
+            Err(err) => {
+                eprintln!("lsb-guest: failed to clone control stream: {}", err);
+                return;
+            }
+        };
         let mut writer = stream;
 
         loop {
@@ -370,10 +555,8 @@ mod guest {
 
                     if req.tty.unwrap_or(false) {
                         // TTY mode: hand off the raw fd
-                        let raw_fd = std::os::unix::io::AsRawFd::as_raw_fd(&writer);
-                        // Prevent TcpStream from closing the fd on drop
-                        std::mem::forget(writer);
-                        std::mem::forget(reader);
+                        let raw_fd = writer.into_raw_fd();
+                        drop(reader);
                         handle_tty_exec(raw_fd, &req);
                         return;
                     }
@@ -727,11 +910,10 @@ mod guest {
         }
     }
 
-    fn handle_piped_exec(
-        req: &ExecRequest,
-        vsock_reader: std::net::TcpStream,
-        vsock_writer: std::net::TcpStream,
-    ) {
+    fn handle_piped_exec<S>(req: &ExecRequest, control_reader: S, control_writer: S)
+    where
+        S: ControlStream,
+    {
         let mut cmd = Command::new(&req.argv[0]);
         if req.argv.len() > 1 {
             cmd.args(&req.argv[1..]);
@@ -763,7 +945,7 @@ mod guest {
                 let (tx, rx) = std::sync::mpsc::channel::<(u8, Vec<u8>)>();
 
                 // Writer thread: drains channel, writes frames to vsock
-                let mut frame_writer = vsock_writer;
+                let mut frame_writer = control_writer;
                 let writer_thread = std::thread::spawn(move || {
                     for (frame_type, payload) in rx {
                         if frame::write_frame(&mut frame_writer, frame_type, &payload).is_err() {
@@ -812,7 +994,7 @@ mod guest {
                 let child_stdin = child.stdin.take().unwrap();
                 let input_thread = std::thread::spawn(move || {
                     let mut stdin = child_stdin;
-                    let mut reader = vsock_reader;
+                    let mut reader = control_reader;
                     loop {
                         match frame::read_frame(&mut reader) {
                             Ok(Some((frame::STDIN, data))) => {
@@ -850,16 +1032,18 @@ mod guest {
             }
             Err(e) => {
                 let msg = format!("failed to spawn: {}", e);
-                let mut w = vsock_writer;
+                let mut w = control_writer;
                 let _ = frame::write_frame(&mut w, frame::ERROR, msg.as_bytes());
             }
         }
     }
 
-    fn handle_watch(req: &WatchRequest, mut writer: std::net::TcpStream) {
+    fn handle_watch<S>(req: &WatchRequest, mut writer: S)
+    where
+        S: ControlStream,
+    {
         use std::collections::HashMap;
         use std::ffi::CString;
-        use std::os::unix::io::AsRawFd;
 
         let inotify_fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK) };
         if inotify_fd < 0 {
@@ -910,7 +1094,7 @@ mod guest {
 
         add_watches(inotify_fd, &req.path, mask, &mut wd_to_path, req.recursive);
 
-        let vsock_raw = writer.as_raw_fd();
+        let control_raw = writer.as_raw_fd();
         let mut buf = [0u8; 4096];
 
         loop {
@@ -989,7 +1173,7 @@ mod guest {
 
             // Check if vsock peer hung up (host closed connection = stop watching)
             let mut vfds = [libc::pollfd {
-                fd: vsock_raw,
+                fd: control_raw,
                 events: 0,
                 revents: 0,
             }];
@@ -1333,6 +1517,106 @@ mod guest {
         let _ = t2.join();
     }
 
+    fn selected_control_transport() -> GuestControlTransport {
+        match std::fs::read_to_string("/proc/cmdline") {
+            Ok(cmdline) => control_transport::from_kernel_cmdline(&cmdline),
+            Err(err) => {
+                eprintln!(
+                    "lsb-guest: failed to read /proc/cmdline, defaulting to vsock transport: {}",
+                    err
+                );
+                GuestControlTransport::Vsock
+            }
+        }
+    }
+
+    fn open_virtio_serial_control_stream() -> File {
+        loop {
+            match control_transport::discover_virtio_serial_device(
+                Path::new("/dev"),
+                Path::new("/sys/class/virtio-ports"),
+                lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+            ) {
+                Ok(Some(path)) => match OpenOptions::new().read(true).write(true).open(&path) {
+                    Ok(file) => {
+                        eprintln!(
+                            "lsb-guest: virtio-serial control port opened at {}",
+                            path.display()
+                        );
+                        return file;
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "lsb-guest: failed to open virtio-serial control port at {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                },
+                Ok(None) => {
+                    eprintln!(
+                        "lsb-guest: virtio-serial control port '{}' not found yet",
+                        lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "lsb-guest: failed to scan virtio-serial control ports: {}",
+                        err
+                    );
+                }
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    fn run_virtio_serial_control_loop() -> ! {
+        eprintln!(
+            "lsb-guest: using virtio-serial control transport '{}'",
+            lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME
+        );
+        eprintln!("lsb-guest: port forwarding over virtio-serial is deferred until M11");
+
+        loop {
+            let stream = open_virtio_serial_control_stream();
+            handle_control_stream(stream);
+            eprintln!("lsb-guest: virtio-serial control stream closed; reopening");
+            reap_zombies();
+        }
+    }
+
+    fn run_vsock_control_loop() -> ! {
+        let listener_fd = create_vsock_listener(VSOCK_PORT);
+        eprintln!("lsb-guest: vsock listening on port {}", VSOCK_PORT);
+
+        let fwd_listener_fd = create_vsock_listener(VSOCK_PORT_FORWARD);
+        eprintln!(
+            "lsb-guest: port forward listener on port {}",
+            VSOCK_PORT_FORWARD
+        );
+        std::thread::spawn(move || {
+            forward_accept_loop(fwd_listener_fd);
+        });
+
+        loop {
+            let client_fd =
+                unsafe { libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
+
+            if client_fd < 0 {
+                reap_zombies();
+                continue;
+            }
+
+            eprintln!("lsb-guest: accepted vsock connection");
+
+            std::thread::spawn(move || {
+                handle_vsock_connection(client_fd);
+            });
+
+            reap_zombies();
+        }
+    }
+
     extern "C" fn sigchld_handler(_: libc::c_int) {
         // Noop — actual reaping happens in the main loop
     }
@@ -1375,34 +1659,9 @@ mod guest {
             );
         }
 
-        let listener_fd = create_vsock_listener(VSOCK_PORT);
-        eprintln!("lsb-guest: vsock listening on port {}", VSOCK_PORT);
-
-        let fwd_listener_fd = create_vsock_listener(VSOCK_PORT_FORWARD);
-        eprintln!(
-            "lsb-guest: port forward listener on port {}",
-            VSOCK_PORT_FORWARD
-        );
-        std::thread::spawn(move || {
-            forward_accept_loop(fwd_listener_fd);
-        });
-
-        loop {
-            let client_fd =
-                unsafe { libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
-
-            if client_fd < 0 {
-                reap_zombies();
-                continue;
-            }
-
-            eprintln!("lsb-guest: accepted vsock connection");
-
-            std::thread::spawn(move || {
-                handle_connection(client_fd);
-            });
-
-            reap_zombies();
+        match selected_control_transport() {
+            GuestControlTransport::Vsock => run_vsock_control_loop(),
+            GuestControlTransport::VirtioSerial => run_virtio_serial_control_loop(),
         }
     }
 }
