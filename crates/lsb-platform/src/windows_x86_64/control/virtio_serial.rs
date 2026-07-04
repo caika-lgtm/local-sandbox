@@ -40,11 +40,13 @@ impl VirtioSerialControlEndpoint {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pipe_name(&self) -> &str {
         &self.pipe_name
     }
@@ -53,10 +55,12 @@ impl VirtioSerialControlEndpoint {
         &self.pipe_path
     }
 
+    #[allow(dead_code)]
     pub(crate) fn port_name(&self) -> &str {
         &self.port_name
     }
 
+    #[allow(dead_code)]
     pub(crate) fn connect_timeout(&self) -> Duration {
         self.connect_timeout
     }
@@ -83,6 +87,7 @@ pub(crate) enum VirtioSerialControlError {
         detail: String,
     },
     EndpointUnavailable,
+    #[allow(dead_code)]
     HostPipeUnsupported,
     ConnectTimeout {
         timeout: Duration,
@@ -168,11 +173,9 @@ fn open_pipe_with_timeout(
     endpoint: &VirtioSerialControlEndpoint,
 ) -> Result<PlatformControlStream, VirtioSerialControlError> {
     use std::fs::OpenOptions;
-    use std::io;
     use std::time::Instant;
 
     let deadline = Instant::now() + endpoint.connect_timeout;
-    let mut last_error = None;
 
     loop {
         match OpenOptions::new()
@@ -182,7 +185,6 @@ fn open_pipe_with_timeout(
         {
             Ok(file) => return Ok(PlatformControlStream::from_file(file)),
             Err(err) if should_retry_pipe_open(&err) && Instant::now() < deadline => {
-                last_error = Some(err.to_string());
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(err) if should_retry_pipe_open(&err) => {
