@@ -1,0 +1,24 @@
+crates/lsb-platform/src/windows_x86_64/fs/mount_plan.rs
+  s_665230258694d1::t_b76f838274e84f 58
+  s_665230258694d1::t_47154d70578f04 1-57,59-75,80-213,217-255,259,264-298,303-350
+  s_665230258694d1::t_cc4252661761b4 76-79,214-216,256-258,260-263,299-302
+crates/lsb-platform/src/windows_x86_64/fs/mod.rs
+  s_665230258694d1::t_47154d70578f04 2,10-12
+  s_665230258694d1::t_a5dce837d69eee 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9ca30667621afbe21ebbb22810feaf3fb25e4c02",
+  "prompts": {},
+  "sessions": {
+    "s_665230258694d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2df8-508c-71f0-ad54-dc229d483e98",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
