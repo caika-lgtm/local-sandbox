@@ -1,0 +1,22 @@
+docs/windows-port/agent-workspace/milestones/08-exec-command.md
+  s_91f4748779b78e::t_6d69a4682c3e31 3,72-73
+docs/windows-port/agent-workspace/state.md
+  s_91f4748779b78e::t_6ffd68f8fc1907 7,32-33,36,48,108
+  s_91f4748779b78e::t_9bb140ab19bd9b 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f8b4903167f2c3212a5cdb1e277649be488318f8",
+  "prompts": {},
+  "sessions": {
+    "s_91f4748779b78e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2cd0-4062-7a92-8c41-29acb53ba195",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
