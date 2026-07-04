@@ -3,8 +3,8 @@
 Last updated: 2026-07-04
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M06 - Virtio-serial control transport
-Overall status: M06 done; M07 ready to start
+Current milestone: M07 - Guest ready handshake
+Overall status: M07 in progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m06-virtio-serial-control`
+- Branch: `codex/windows-m07-guest-ready-handshake`
 - Issue: TBD
 - Agent: Codex
 - Start commit: current branch head after M05 direct boot smoke fix/docs commits
-- End commit: branch head after the M06 review follow-up docs/validation commit
+- End commit: TBD
 
 ## Milestone status table
 
@@ -28,7 +28,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M04 QEMU process lifecycle | Done | Codex | `codex/windows-m04-qemu-lifecycle` | Private QEMU supervisor can spawn, monitor, terminate, write lifecycle artifacts, and use Windows Job Object cleanup; not wired to public VM startup and no guest boot. |
 | M05 Direct Linux boot and serial logs | Done | Codex | `codex/windows-m05-direct-linux-boot-serial-logs` | Direct boot path, serial/QEMU artifacts, boot observation timeout, workflow boot asset provisioning, and provisioned self-hosted WHPX smoke evidence are in place. |
 | M06 Virtio-serial control transport | Done | Codex | `codex/windows-m06-virtio-serial-control` | Host-side virtio-serial/QEMU pipe transport, QEMU control chardev wiring, guest transport selection, focused tests, and self-hosted WHPX smoke validation are in place. |
-| M07 Guest ready handshake | Not started | TBD | TBD | Control transport is available for implementation; requires ready protocol over the established control stream. |
+| M07 Guest ready handshake | In progress | Codex | `codex/windows-m07-guest-ready-handshake` | Control transport is available; implementing protocol-level ready over the established stream. |
 | M08 Exec command | Blocked by M07 | TBD | TBD | First useful guest operation. |
 | M09 Copy-in/copy-out data plane | Blocked by M08 | TBD | TBD | Requires guest file protocol. |
 | M10 Mount MVP semantics | Blocked by M09 | TBD | TBD | Uses copy/import/export semantics first. |
@@ -68,6 +68,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 
 ## Active implementation notes
 
+- 2026-07-04: Started M07 on `codex/windows-m07-guest-ready-handshake`; scope is the protocol-level LocalSandbox guest-ready frame, guest emission after minimal init, Windows host wait over the established M06 control stream, readiness diagnostics, and focused protocol/fake-transport tests. Exec, file APIs, mounts, networking, port forwarding, checkpoints, and Node packaging remain later milestones.
 - 2026-07-04: Started M06 on `codex/windows-m06-virtio-serial-control`; scope is the Windows virtio-serial host endpoint, QEMU control chardev wiring, a platform-neutral host control stream abstraction, guest virtio-serial port discovery/opening, and focused tests/docs. Guest ready handshake, exec/file API parity, muxing, mounts, networking, checkpoints, and Node packaging remain later milestones unless already supported by existing code paths.
 - 2026-07-04: Implemented M06 review slice. Added `PlatformControlStream` and `PlatformVm::connect_control`, a Windows `VirtioSerialControlEndpoint` with random per-instance QEMU pipe names and bounded open retry/error mapping, Windows backend lifecycle wiring that adds the control chardev to direct-boot argv, shared `lsb-proto` virtio-serial port-name constant, guest `lsb.transport=virtio-serial` selection with `/dev/virtio-ports` then `/sys/class/virtio-ports` discovery, and in-memory frame/endpoint/discovery tests. The host endpoint is tied to the running QEMU boot object; stream cleanup is by handle drop and QEMU cleanup remains owned by the existing supervisor/Job Object path.
 - 2026-07-04: Completed M06 ordering validation. Initial self-hosted smoke with the virtio-serial chardev but no early host pipe client produced empty serial output, confirming QEMU pipe chardev startup blocks until a client connects. The Windows boot lifecycle now opens the control pipe immediately after QEMU starts, keeps the established `PlatformControlStream`, and clones it for later `connect_control()` calls. Passing run `28701999114` showed argv with `virtio-serial-pci`, `virtserialport`, `lsb.transport=virtio-serial`, `-nic none`, and serial lines showing `lsb-guest` selected virtio-serial and opened `/dev/vport1p1`.
