@@ -145,3 +145,44 @@ pub fn parse_exit_code(payload: &[u8]) -> Option<i32> {
         payload[0], payload[1], payload[2], payload[3],
     ]))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn binary_frame_round_trips_over_in_memory_stream() {
+        let mut stream = Cursor::new(Vec::new());
+
+        write_frame(&mut stream, STDOUT, b"hello").expect("frame should write");
+        stream.set_position(0);
+
+        let frame = read_frame(&mut stream)
+            .expect("frame should read")
+            .expect("frame should be present");
+        assert_eq!(frame, (STDOUT, b"hello".to_vec()));
+        assert!(read_frame(&mut stream).expect("EOF should be clean").is_none());
+    }
+
+    #[test]
+    fn json_frame_round_trips_over_in_memory_stream() {
+        let mut stream = Cursor::new(Vec::new());
+        let request = crate::ReadFileRequest {
+            path: "/tmp/example".to_string(),
+        };
+
+        send_json(&mut stream, READ_FILE_REQ, &request).expect("json frame should write");
+        stream.set_position(0);
+
+        let (msg_type, payload) = read_frame(&mut stream)
+            .expect("frame should read")
+            .expect("frame should be present");
+        let decoded: crate::ReadFileRequest =
+            serde_json::from_slice(&payload).expect("payload should decode");
+
+        assert_eq!(msg_type, READ_FILE_REQ);
+        assert_eq!(decoded.path, "/tmp/example");
+    }
+}
