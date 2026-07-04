@@ -1,0 +1,27 @@
+crates/lsb-vm/src/sandbox.rs
+  s_91f4748779b78e::t_4908a203c7bb4d 313,534,850,859
+  s_91f4748779b78e::t_933d0fdc18ac0e 565,614
+  s_91f4748779b78e::t_bf0ef72d094d66 1051,1072
+crates/lsb-proto/src/lib.rs
+  s_91f4748779b78e::t_f2487afa7dafbf 232,235,307-315
+  s_91f4748779b78e::t_933d0fdc18ac0e 58-59
+  s_91f4748779b78e::t_a48b3a4f73631b 316
+crates/lsb-guest/src/main.rs
+  s_91f4748779b78e::t_933d0fdc18ac0e 1029-1048,1051,1054-1055,1071
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "18e4159e00c66644cc7684617fdb86f0b01aff84",
+  "prompts": {},
+  "sessions": {
+    "s_91f4748779b78e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2cd0-4062-7a92-8c41-29acb53ba195",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
