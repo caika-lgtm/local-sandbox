@@ -809,8 +809,22 @@ mod tests {
         std::os::unix::fs::symlink(root.join("target.txt"), source.join("link.txt"))
             .expect("symlink fixture");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(root.join("target.txt"), source.join("link.txt"))
-            .expect("symlink fixture");
+        {
+            match std::os::windows::fs::symlink_file(
+                root.join("target.txt"),
+                source.join("link.txt"),
+            ) {
+                Ok(()) => {}
+                Err(error) if error.raw_os_error() == Some(1314) => {
+                    eprintln!(
+                        "skipping Windows symlink rejection fixture because the runner lacks symlink privilege: {error}"
+                    );
+                    let _ = fs::remove_dir_all(root);
+                    return;
+                }
+                Err(error) => panic!("symlink fixture: {error}"),
+            }
+        }
 
         let err = plan_copy_in(&source, "/workspace/input").expect_err("symlink should fail");
 
