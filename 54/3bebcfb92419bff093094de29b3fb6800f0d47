@@ -1,0 +1,19 @@
+crates/lsb-platform/src/windows_x86_64/fs/copy.rs
+  s_20688dffa7c059::t_f762778523a668 812-827
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "543bebcfb92419bff093094de29b3fb6800f0d47",
+  "prompts": {},
+  "sessions": {
+    "s_20688dffa7c059": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2d8a-d1e6-7063-ab13-57ed9148d2f8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
