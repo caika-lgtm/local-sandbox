@@ -19,8 +19,10 @@ if ($missingBootVars.Count -eq 0) {
   cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
   Write-Host "== Windows guest exec smoke =="
   cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
+  Write-Host "== Windows guest copy transfer smoke =="
+  cargo test -p lsb-vm windows_qemu_copy_transfer_smoke -- --ignored --nocapture
 } else {
-  Write-Warning "Skipping Windows QEMU direct boot and guest exec smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
+  Write-Warning "Skipping Windows QEMU direct boot, guest exec, and guest copy transfer smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
 }
 
 # Later:
