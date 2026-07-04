@@ -6,7 +6,7 @@ pub(crate) const DEFAULT_KERNEL_CONSOLE: &str = "ttyS0";
 pub(crate) const DEFAULT_ROOT_DEVICE: &str = "/dev/vda";
 pub(crate) const CONTROL_BUS_ID: &str = "lsbserial0";
 pub(crate) const CONTROL_CHARDEV_ID: &str = "lsbctl";
-pub(crate) const CONTROL_PORT_NAME: &str = "org.localsandbox.control";
+pub(crate) const CONTROL_PORT_NAME: &str = lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME;
 pub(crate) const ROOT_DRIVE_ID: &str = "root";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

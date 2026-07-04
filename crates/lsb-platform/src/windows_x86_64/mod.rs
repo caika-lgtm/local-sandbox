@@ -5,6 +5,7 @@
 
 mod backend;
 mod config;
+mod control;
 mod errors;
 mod qemu;
 

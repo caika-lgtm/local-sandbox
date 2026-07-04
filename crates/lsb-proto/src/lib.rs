@@ -191,6 +191,7 @@ pub struct WatchEvent {
 
 pub const VSOCK_PORT: u32 = 1024;
 pub const VSOCK_PORT_FORWARD: u32 = 1025;
+pub const VIRTIO_SERIAL_CONTROL_PORT_NAME: &str = "org.localsandbox.control";
 
 #[cfg(test)]
 mod tests {
