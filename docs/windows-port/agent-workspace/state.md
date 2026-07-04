@@ -4,7 +4,7 @@ Last updated: 2026-07-04
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
 Current milestone: M08 - Exec command
-Overall status: M07 complete; M08 ready to start
+Overall status: M07 complete; M08 in progress
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m07-guest-ready-handshake`
+- Branch: `codex/windows-m08-exec-command`
 - Issue: TBD
 - Agent: Codex
 - Start commit: `b062c7d`
-- End commit: `c0b8a3a`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -29,7 +29,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M05 Direct Linux boot and serial logs | Done | Codex | `codex/windows-m05-direct-linux-boot-serial-logs` | Direct boot path, serial/QEMU artifacts, boot observation timeout, workflow boot asset provisioning, and provisioned self-hosted WHPX smoke evidence are in place. |
 | M06 Virtio-serial control transport | Done | Codex | `codex/windows-m06-virtio-serial-control` | Host-side virtio-serial/QEMU pipe transport, QEMU control chardev wiring, guest transport selection, focused tests, and self-hosted WHPX smoke validation are in place. |
 | M07 Guest ready handshake | Done | Codex | `codex/windows-m07-guest-ready-handshake` | Protocol-level `GuestReady` over the established virtio-serial control stream is implemented and validated by fake/unit tests plus self-hosted WHPX smoke. |
-| M08 Exec command | Not started | TBD | TBD | First useful guest operation; now unblocked by M07 readiness. |
+| M08 Exec command | In progress | Codex | `codex/windows-m08-exec-command` | First useful guest operation over the established virtio-serial control stream. |
 | M09 Copy-in/copy-out data plane | Blocked by M08 | TBD | TBD | Requires guest file protocol. |
 | M10 Mount MVP semantics | Blocked by M09 | TBD | TBD | Uses copy/import/export semantics first. |
 | M11 Port forwarding | Not started | TBD | TBD | Later milestone; preserve no-network default. |
@@ -66,6 +66,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 - 2026-07-04: Optimized smoke/e2e boot asset reuse for the single persistent Windows runner. The workflow now probes `C:\lsb-assets\by-key\<asset-key>\` first and skips the Linux prepare/upload plus Windows artifact download on a validated local hit; misses still hydrate the local cache from the Linux same-run artifact.
 - 2026-07-04: Fixed the first provisioned M05 smoke failure by changing the WHPX direct boot CPU model from `max` to `Westmere`, based on QEMU stderr APX/MPX conflicts and `WHPX: Unexpected VP exit code 4` in run `28696602575`. Also staged external Windows diagnostics into `target/windows-lsb-diagnostics` before artifact upload.
 - 2026-07-04: Completed M07 guest ready handshake. Added the platform-neutral `GuestReady` protocol frame, Windows guest emission after virtio-serial init, host-side wait over the established M06 control stream, protocol/timeout/early-exit/unsupported-capability errors, `boot.status.json` guest-ready diagnostics, and protocol/fake-transport tests. No exec, file, mount, network, port forwarding, or checkpoint behavior was implemented.
+- 2026-07-04: Started M08 on `codex/windows-m08-exec-command` from `c063f22`; scope is non-interactive guest command execution over the established Windows virtio-serial control stream. The implementation must preserve macOS exec behavior, keep public CLI/SDK/Node API shape stable, keep QEMU networking disabled, and explicitly defer streaming spawn/kill if it cannot be supported before the virtio-serial mux milestone.
 
 ## Active implementation notes
 

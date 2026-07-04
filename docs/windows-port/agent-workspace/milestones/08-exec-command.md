@@ -1,6 +1,6 @@
 # M08: Exec Command
 
-Status: Not started
+Status: In progress
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -68,7 +68,7 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 ## Handoff
 
 - Branch/PR: TBD
-- Summary: TBD
+- Summary: In progress on `codex/windows-m08-exec-command`.
 - Tests run: TBD
 - Debug artifacts: TBD
 - New decisions: TBD
