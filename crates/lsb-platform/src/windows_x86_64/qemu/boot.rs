@@ -509,7 +509,7 @@ impl fmt::Display for QemuBootError {
                 ..
             } => write!(
                 f,
-                "the Windows guest advertised unsupported runtime capabilities during readiness: {}. M07 does not implement exec, file APIs, mounts, networking, port forwarding, or checkpoints. serial excerpt: {}.{}",
+                "the Windows guest advertised unsupported runtime capabilities during readiness: {}. The current Windows backend accepts the base guest-ready handshake and enables M08 exec from the host side, but additional advertised capabilities require later mux/file/mount/network/checkpoint milestones. serial excerpt: {}.{}",
                 capability_summary(capabilities),
                 empty_as_placeholder(serial_excerpt),
                 self.artifact_sentence()
@@ -1968,7 +1968,7 @@ mod tests {
             assert_eq!(ready.transport, GuestTransport::VirtioSerial);
             assert!(
                 ready.capabilities.is_empty(),
-                "M07 guest ready must not claim future capabilities: {:?}",
+                "guest ready currently keeps capabilities empty; M08 exec is host-driven: {:?}",
                 ready.capabilities
             );
             let status = fs::read_to_string(&boot.artifacts().boot_status)

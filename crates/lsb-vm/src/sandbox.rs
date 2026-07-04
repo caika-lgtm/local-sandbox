@@ -16,6 +16,7 @@ use anyhow::{bail, Context, Result};
 use crossbeam_channel::Receiver;
 #[cfg(target_os = "macos")]
 use lsb_platform::terminal;
+use lsb_platform::PlatformControlStream;
 use lsb_platform::{self, PlatformSharedDir, PlatformVm, PlatformVmConfig, VmState};
 
 use lsb_proto::{
@@ -29,7 +30,7 @@ use lsb_proto::{ForwardRequest, ForwardResponse, VSOCK_PORT, VSOCK_PORT_FORWARD}
 #[cfg(not(target_os = "macos"))]
 fn unsupported_runtime(capability: &str, milestone: &str) -> anyhow::Error {
     anyhow::anyhow!(
-        "Windows support is in progress: {capability} is not implemented yet ({milestone}); current Windows runtime support is limited to VM startup through the M07 guest-ready handshake"
+        "Windows support is in progress: {capability} is not implemented yet ({milestone}); current Windows runtime support includes VM startup through the M07 guest-ready handshake and non-interactive exec through M08"
     )
 }
 
@@ -159,6 +160,8 @@ impl VmConfigBuilder {
                 shared_dirs,
             })?,
             mounts: Mutex::new(mount_requests),
+            #[cfg(not(target_os = "macos"))]
+            control_session: Mutex::new(()),
         })
     }
 }
@@ -168,6 +171,8 @@ impl VmConfigBuilder {
 pub struct Sandbox {
     vm: Arc<dyn PlatformVm>,
     mounts: Mutex<Vec<MountRequest>>,
+    #[cfg(not(target_os = "macos"))]
+    control_session: Mutex<()>,
 }
 
 fn build_mount_plan(mounts: &[MountConfig]) -> (Vec<PlatformSharedDir>, Vec<MountRequest>) {
@@ -282,48 +287,32 @@ impl Sandbox {
         stdout: &mut impl Write,
         stderr: &mut impl Write,
     ) -> Result<i32> {
-        let stream = self.connect_vsock()?;
+        self.exec_with_env_and_cwd(argv, env, None, stdout, stderr)
+    }
+
+    pub fn exec_with_env_and_cwd(
+        &self,
+        argv: &[impl AsRef<str>],
+        env: &HashMap<String, String>,
+        cwd: Option<&str>,
+        stdout: &mut impl Write,
+        stderr: &mut impl Write,
+    ) -> Result<i32> {
+        #[cfg(not(target_os = "macos"))]
+        let _control_guard = self
+            .control_session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows guest control session lock poisoned"))?;
+
+        let stream = self.connect_exec_control()?;
         let mut writer = stream.try_clone()?;
         let mut reader = stream;
 
         self.send_mount_requests(&mut writer, &mut reader)?;
 
-        let req = ExecRequest {
-            argv: argv.iter().map(|s| s.as_ref().to_string()).collect(),
-            env: env.clone(),
-            tty: None,
-            rows: None,
-            cols: None,
-            cwd: None,
-        };
-        frame::send_json(&mut writer, frame::EXEC_REQ, &req)?;
-
-        let mut exit_code = 0;
-
-        loop {
-            match frame::read_frame(&mut reader).context("reading vsock response")? {
-                Some((frame::STDOUT, payload)) => {
-                    stdout.write_all(&payload)?;
-                }
-                Some((frame::STDERR, payload)) => {
-                    stderr.write_all(&payload)?;
-                }
-                Some((frame::EXIT, payload)) => {
-                    exit_code = frame::parse_exit_code(&payload).unwrap_or(0);
-                    break;
-                }
-                Some((frame::ERROR, payload)) => {
-                    let msg = String::from_utf8_lossy(&payload);
-                    write!(stderr, "guest error: {}", msg)?;
-                    exit_code = 1;
-                    break;
-                }
-                Some(_) => {}  // unknown type, skip
-                None => break, // EOF
-            }
-        }
-
-        Ok(exit_code)
+        let req = build_exec_request(argv, env, cwd, None);
+        send_exec_request(&mut writer, &req)?;
+        collect_exec_response(&mut reader, stdout, stderr)
     }
 
     pub fn read_file(&self, path: &str) -> Result<Vec<u8>> {
@@ -525,23 +514,28 @@ impl Sandbox {
         env: &HashMap<String, String>,
         cwd: Option<&str>,
     ) -> Result<TcpStream> {
-        let stream = self.connect_vsock()?;
-        let mut writer = stream.try_clone()?;
-        let mut reader = stream.try_clone()?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (argv, env, cwd);
+            return Err(unsupported_runtime(
+                "streaming exec stdin/kill",
+                "M11 transport multiplexer; M08 supports non-interactive exec through Sandbox::exec",
+            ));
+        }
 
-        self.send_mount_requests(&mut writer, &mut reader)?;
+        #[cfg(target_os = "macos")]
+        {
+            let stream = self.connect_vsock()?;
+            let mut writer = stream.try_clone()?;
+            let mut reader = stream.try_clone()?;
 
-        let req = ExecRequest {
-            argv: argv.iter().map(|s| s.as_ref().to_string()).collect(),
-            env: env.clone(),
-            tty: None,
-            rows: None,
-            cols: None,
-            cwd: cwd.map(|s| s.to_string()),
-        };
-        frame::send_json(&mut writer, frame::EXEC_REQ, &req)?;
+            self.send_mount_requests(&mut writer, &mut reader)?;
 
-        Ok(stream)
+            let req = build_exec_request(argv, env, cwd, None);
+            send_exec_request(&mut writer, &req)?;
+
+            Ok(stream)
+        }
     }
 
     /// Open a vsock connection for an interactive shell with PTY support.
@@ -824,9 +818,72 @@ impl Sandbox {
     #[cfg(not(target_os = "macos"))]
     fn connect_vsock(&self) -> Result<TcpStream> {
         Err(unsupported_runtime(
-            "guest control transport",
-            "M07 guest-ready uses virtio-serial; command sessions start in M08",
+            "macOS-style vsock guest control transport",
+            "Windows M08 supports non-interactive exec over virtio-serial; file APIs, watch, shell, streaming spawn, port forwarding, and muxed sessions are later milestones",
         ))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn connect_exec_control(&self) -> Result<PlatformControlStream> {
+        self.connect_vsock()
+            .map(PlatformControlStream::from_tcp_stream)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn connect_exec_control(&self) -> Result<PlatformControlStream> {
+        let stream = self
+            .vm
+            .connect_control()
+            .context("opening Windows virtio-serial exec control stream")?;
+        let _ = stream.set_nodelay_if_tcp(true);
+        Ok(stream)
+    }
+}
+
+fn build_exec_request(
+    argv: &[impl AsRef<str>],
+    env: &HashMap<String, String>,
+    cwd: Option<&str>,
+    tty: Option<bool>,
+) -> ExecRequest {
+    ExecRequest {
+        argv: argv.iter().map(|s| s.as_ref().to_string()).collect(),
+        env: env.clone(),
+        tty,
+        rows: None,
+        cols: None,
+        cwd: cwd.map(|s| s.to_string()),
+    }
+}
+
+fn send_exec_request(writer: &mut impl Write, req: &ExecRequest) -> Result<()> {
+    frame::send_json(writer, frame::EXEC_REQ, req).context("sending exec request")
+}
+
+fn collect_exec_response(
+    reader: &mut impl Read,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> Result<i32> {
+    loop {
+        match frame::read_frame(reader).context("reading guest exec response")? {
+            Some((frame::STDOUT, payload)) => {
+                stdout.write_all(&payload)?;
+            }
+            Some((frame::STDERR, payload)) => {
+                stderr.write_all(&payload)?;
+            }
+            Some((frame::EXIT, payload)) => {
+                return Ok(frame::parse_exit_code(&payload).unwrap_or(0));
+            }
+            Some((frame::ERROR, payload)) => {
+                let msg = String::from_utf8_lossy(&payload);
+                write!(stderr, "guest error: {}", msg)?;
+                return Ok(1);
+            }
+            Some(_) => {} // unknown frame, skip
+            None => bail!("guest closed exec stream before exit"),
+        }
     }
 }
 
@@ -904,6 +961,9 @@ fn relay(a: TcpStream, b: TcpStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    use std::path::PathBuf;
 
     #[test]
     fn overlay_mount_generates_readonly_shared_dir_and_overlay_request() {
@@ -973,5 +1033,240 @@ mod tests {
             }
             MountRequest::Overlay { .. } => panic!("expected direct request"),
         }
+    }
+
+    #[test]
+    fn exec_request_frame_includes_argv_env_and_cwd() {
+        let mut env = HashMap::new();
+        env.insert("LSB_M08_ENV".to_string(), "present".to_string());
+        let req = build_exec_request(
+            &["/bin/sh", "-c", "printf test"],
+            &env,
+            Some("/workspace"),
+            None,
+        );
+        let mut encoded = Vec::new();
+
+        send_exec_request(&mut encoded, &req).expect("exec request should encode");
+
+        let mut reader = Cursor::new(encoded);
+        let (msg_type, payload) = frame::read_frame(&mut reader)
+            .expect("frame should decode")
+            .expect("frame should be present");
+        let decoded: ExecRequest =
+            serde_json::from_slice(&payload).expect("exec request should decode");
+
+        assert_eq!(msg_type, frame::EXEC_REQ);
+        assert_eq!(decoded.argv, ["/bin/sh", "-c", "printf test"]);
+        assert_eq!(
+            decoded.env.get("LSB_M08_ENV").map(String::as_str),
+            Some("present")
+        );
+        assert_eq!(decoded.cwd.as_deref(), Some("/workspace"));
+        assert_eq!(decoded.tty, None);
+    }
+
+    #[test]
+    fn exec_response_streams_stdout_stderr_and_exit_code() {
+        let mut reader = exec_response_stream(&[
+            (frame::STDOUT, b"hello ".as_slice()),
+            (frame::STDERR, b"warn".as_slice()),
+            (frame::STDOUT, b"world\n".as_slice()),
+            (frame::EXIT, &frame::exit_payload(0)),
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code =
+            collect_exec_response(&mut reader, &mut stdout, &mut stderr).expect("exec response");
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, b"hello world\n");
+        assert_eq!(stderr, b"warn");
+    }
+
+    #[test]
+    fn exec_response_preserves_nonzero_exit_code() {
+        let mut reader = exec_response_stream(&[(frame::EXIT, &frame::exit_payload(7))]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code =
+            collect_exec_response(&mut reader, &mut stdout, &mut stderr).expect("exec response");
+
+        assert_eq!(exit_code, 7);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn exec_response_collects_large_stdout_frame() {
+        let large = vec![b'x'; 256 * 1024];
+        let mut reader = exec_response_stream(&[
+            (frame::STDOUT, &large),
+            (frame::EXIT, &frame::exit_payload(0)),
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code =
+            collect_exec_response(&mut reader, &mut stdout, &mut stderr).expect("exec response");
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, large);
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn exec_response_maps_guest_error_to_stderr_and_exit_one() {
+        let mut reader = exec_response_stream(&[(frame::ERROR, b"failed to spawn: missing")]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code =
+            collect_exec_response(&mut reader, &mut stdout, &mut stderr).expect("exec response");
+
+        assert_eq!(exit_code, 1);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, b"guest error: failed to spawn: missing");
+    }
+
+    #[test]
+    fn exec_response_ignores_guest_ready_frames_before_output() {
+        let mut ready =
+            lsb_proto::GuestReady::new(lsb_proto::GuestTransport::VirtioSerial, "guest-test");
+        ready.capabilities.push("exec".to_string());
+        let ready_payload = serde_json::to_vec(&ready).expect("ready should encode");
+        let mut reader = exec_response_stream(&[
+            (frame::GUEST_READY, &ready_payload),
+            (frame::STDOUT, b"after-ready\n"),
+            (frame::EXIT, &frame::exit_payload(0)),
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code =
+            collect_exec_response(&mut reader, &mut stdout, &mut stderr).expect("exec response");
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, b"after-ready\n");
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn exec_response_errors_when_guest_closes_before_exit() {
+        let mut reader = exec_response_stream(&[(frame::STDOUT, b"partial")]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let err = collect_exec_response(&mut reader, &mut stdout, &mut stderr)
+            .expect_err("missing exit should fail");
+
+        assert!(err.to_string().contains("before exit"));
+        assert_eq!(stdout, b"partial");
+        assert!(stderr.is_empty());
+    }
+
+    fn exec_response_stream(frames: &[(u8, &[u8])]) -> Cursor<Vec<u8>> {
+        let mut stream = Cursor::new(Vec::new());
+        for (msg_type, payload) in frames {
+            frame::write_frame(&mut stream, *msg_type, payload).expect("frame should write");
+        }
+        stream.set_position(0);
+        stream
+    }
+
+    #[test]
+    #[ignore = "requires Windows 11 x86_64 with WHPX, QEMU, and disposable LocalSandbox assets"]
+    fn windows_qemu_exec_smoke() {
+        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+        {
+            eprintln!("skipping Windows QEMU exec smoke on non-Windows host");
+        }
+
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            let kernel = required_env_path("LSB_WINDOWS_BOOT_KERNEL");
+            let initrd = required_env_path("LSB_WINDOWS_BOOT_INITRD");
+            let rootfs = required_env_path("LSB_WINDOWS_BOOT_ROOTFS");
+            let sandbox = Sandbox::builder()
+                .kernel(kernel.display().to_string())
+                .initrd(initrd.display().to_string())
+                .rootfs(rootfs.display().to_string())
+                .console(false)
+                .build()
+                .expect("Windows exec smoke sandbox should build");
+
+            sandbox
+                .start()
+                .expect("Windows exec smoke should reach guest ready before exec");
+
+            let result = (|| -> Result<()> {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+
+                let code = sandbox.exec(&["/bin/true"], &mut stdout, &mut stderr)?;
+                assert_eq!(code, 0);
+                assert!(stdout.is_empty());
+                assert!(stderr.is_empty());
+
+                stdout.clear();
+                stderr.clear();
+                let code = sandbox.exec(&["/bin/echo", "hello"], &mut stdout, &mut stderr)?;
+                assert_eq!(code, 0);
+                assert_eq!(String::from_utf8_lossy(&stdout), "hello\n");
+                assert!(stderr.is_empty());
+
+                stdout.clear();
+                stderr.clear();
+                let code = sandbox.exec(
+                    &["/bin/sh", "-c", "printf err >&2"],
+                    &mut stdout,
+                    &mut stderr,
+                )?;
+                assert_eq!(code, 0);
+                assert!(stdout.is_empty());
+                assert_eq!(String::from_utf8_lossy(&stderr), "err");
+
+                stdout.clear();
+                stderr.clear();
+                let mut env = HashMap::new();
+                env.insert("LSB_M08_ENV".to_string(), "present".to_string());
+                let code = sandbox.exec_with_env_and_cwd(
+                    &["/bin/sh", "-c", "printf '%s:%s' \"$PWD\" \"$LSB_M08_ENV\""],
+                    &env,
+                    Some("/tmp"),
+                    &mut stdout,
+                    &mut stderr,
+                )?;
+                assert_eq!(code, 0);
+                assert_eq!(String::from_utf8_lossy(&stdout), "/tmp:present");
+                assert!(stderr.is_empty());
+
+                stdout.clear();
+                stderr.clear();
+                let code = sandbox.exec(
+                    &["/bin/sh", "-c", "printf nope >&2; exit 7"],
+                    &mut stdout,
+                    &mut stderr,
+                )?;
+                assert_eq!(code, 7);
+                assert!(stdout.is_empty());
+                assert_eq!(String::from_utf8_lossy(&stderr), "nope");
+
+                Ok(())
+            })();
+
+            let stop_result = sandbox.stop();
+            result.expect("Windows exec smoke commands should pass");
+            stop_result.expect("Windows exec smoke QEMU should stop cleanly");
+        }
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn required_env_path(name: &str) -> PathBuf {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("{name} must point to a disposable boot asset path"))
     }
 }

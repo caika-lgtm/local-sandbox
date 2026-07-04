@@ -7,8 +7,6 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use tokio::sync::{mpsc, watch};
 
-use crate::ExecResult;
-
 enum ProcessInput {
     Stdin(Vec<u8>),
     Kill,
@@ -63,41 +61,6 @@ impl ProcessHandle {
             }
         }
     }
-}
-
-pub(crate) fn collect_exec_stream(stream: TcpStream) -> Result<ExecResult> {
-    let mut reader = BufReader::new(stream);
-    let mut stdout_buf = Vec::new();
-    let mut stderr_buf = Vec::new();
-    let mut exit_code = None;
-
-    loop {
-        match lsb_proto::frame::read_frame(&mut reader)? {
-            Some((lsb_proto::frame::STDOUT, payload)) => stdout_buf.extend(payload),
-            Some((lsb_proto::frame::STDERR, payload)) => stderr_buf.extend(payload),
-            Some((lsb_proto::frame::EXIT, payload)) => {
-                exit_code = Some(lsb_proto::frame::parse_exit_code(&payload).unwrap_or(0));
-                break;
-            }
-            Some((lsb_proto::frame::ERROR, payload)) => {
-                stderr_buf.extend(b"guest error: ");
-                stderr_buf.extend(payload);
-                exit_code = Some(1);
-                break;
-            }
-            Some(_) => {}
-            None => break,
-        }
-    }
-
-    let exit_code =
-        exit_code.ok_or_else(|| anyhow::anyhow!("guest closed exec stream before exit"))?;
-
-    Ok(ExecResult {
-        stdout: String::from_utf8_lossy(&stdout_buf).to_string(),
-        stderr: String::from_utf8_lossy(&stderr_buf).to_string(),
-        exit_code,
-    })
 }
 
 pub(crate) fn spawn_process_threads(stream: TcpStream) -> ProcessHandle {

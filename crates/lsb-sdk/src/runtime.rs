@@ -10,7 +10,7 @@ use lsb_proxy::config::ProxyConfig;
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
-use crate::process::{collect_exec_stream, spawn_process_threads, ProcessHandle};
+use crate::process::{spawn_process_threads, ProcessHandle};
 use crate::shell::{ShellEvent, ShellHandle, ShellReader, ShellWriter};
 use crate::storage::{prepare_storage, StoragePrepareOptions};
 use crate::types::{CommandOptions, ExecResult, SandboxConfig};
@@ -749,6 +749,14 @@ fn exec_command(
     cwd: Option<&str>,
 ) -> Result<ExecResult> {
     let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-    let stream = sandbox.open_exec(&argv_refs, env, cwd)?;
-    collect_exec_stream(stream)
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code =
+        sandbox.exec_with_env_and_cwd(&argv_refs, env, cwd, &mut stdout, &mut stderr)?;
+
+    Ok(ExecResult {
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        exit_code,
+    })
 }
