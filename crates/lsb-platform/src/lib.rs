@@ -5,6 +5,8 @@
 #![cfg_attr(target_os = "windows", deny(unsafe_op_in_unsafe_fn))]
 
 use std::env;
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
@@ -214,10 +216,77 @@ pub struct PlatformVmConfig {
     pub shared_dirs: Vec<PlatformSharedDir>,
 }
 
+#[derive(Debug)]
+pub struct PlatformControlStream {
+    inner: PlatformControlStreamInner,
+}
+
+#[derive(Debug)]
+enum PlatformControlStreamInner {
+    Tcp(TcpStream),
+    File(File),
+}
+
+impl PlatformControlStream {
+    pub fn from_tcp_stream(stream: TcpStream) -> Self {
+        Self {
+            inner: PlatformControlStreamInner::Tcp(stream),
+        }
+    }
+
+    pub fn try_clone(&self) -> io::Result<Self> {
+        match &self.inner {
+            PlatformControlStreamInner::Tcp(stream) => {
+                stream.try_clone().map(PlatformControlStream::from_tcp_stream)
+            }
+            PlatformControlStreamInner::File(file) => file.try_clone().map(Self::from_file),
+        }
+    }
+
+    pub fn set_nodelay_if_tcp(&self, enabled: bool) -> io::Result<()> {
+        match &self.inner {
+            PlatformControlStreamInner::Tcp(stream) => stream.set_nodelay(enabled),
+            PlatformControlStreamInner::File(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn from_file(file: File) -> Self {
+        Self {
+            inner: PlatformControlStreamInner::File(file),
+        }
+    }
+}
+
+impl Read for PlatformControlStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match &mut self.inner {
+            PlatformControlStreamInner::Tcp(stream) => stream.read(buf),
+            PlatformControlStreamInner::File(file) => file.read(buf),
+        }
+    }
+}
+
+impl Write for PlatformControlStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match &mut self.inner {
+            PlatformControlStreamInner::Tcp(stream) => stream.write(buf),
+            PlatformControlStreamInner::File(file) => file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match &mut self.inner {
+            PlatformControlStreamInner::Tcp(stream) => stream.flush(),
+            PlatformControlStreamInner::File(file) => file.flush(),
+        }
+    }
+}
+
 pub trait PlatformVm: Send + Sync {
     fn start(&self) -> Result<()>;
     fn stop(&self) -> Result<()>;
     fn state_channel(&self) -> crossbeam_channel::Receiver<VmState>;
+    fn connect_control(&self) -> Result<PlatformControlStream>;
     fn connect_to_vsock_port(&self, port: u32) -> Result<TcpStream>;
 }
 

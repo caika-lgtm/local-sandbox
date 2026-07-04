@@ -27,7 +27,10 @@ pub mod terminal;
 mod vm;
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-use crate::{PlatformSharedDir, PlatformSpec, PlatformStatus, PlatformVm, PlatformVmConfig};
+use crate::{
+    PlatformControlStream, PlatformSharedDir, PlatformSpec, PlatformStatus, PlatformVm,
+    PlatformVmConfig,
+};
 
 #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
 use crate::{PlatformSpec, PlatformStatus};
@@ -194,6 +197,12 @@ impl PlatformVm for VirtualMachine {
 
     fn state_channel(&self) -> crossbeam_channel::Receiver<VmState> {
         VirtualMachine::state_channel(self)
+    }
+
+    fn connect_control(&self) -> Result<PlatformControlStream> {
+        VirtualMachine::connect_to_vsock_port(self, lsb_proto::VSOCK_PORT)
+            .map(PlatformControlStream::from_tcp_stream)
+            .map_err(Into::into)
     }
 
     fn connect_to_vsock_port(&self, port: u32) -> Result<std::net::TcpStream> {

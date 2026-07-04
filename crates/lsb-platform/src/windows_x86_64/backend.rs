@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
-use crate::{PlatformVm, PlatformVmConfig, VmState};
+use crate::{PlatformControlStream, PlatformVm, PlatformVmConfig, VmState};
 
 use super::config::WindowsVmConfig;
 use super::errors::unsupported;
@@ -135,6 +135,13 @@ impl PlatformVm for WindowsVm {
 
     fn state_channel(&self) -> Receiver<VmState> {
         self.state_rx.clone()
+    }
+
+    fn connect_control(&self) -> Result<PlatformControlStream> {
+        Err(unsupported(
+            "guest control transport",
+            "M06 virtio-serial control transport is being wired after QEMU direct boot",
+        ))
     }
 
     fn connect_to_vsock_port(&self, _port: u32) -> Result<TcpStream> {

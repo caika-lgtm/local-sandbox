@@ -924,6 +924,7 @@ dependencies = [
  "crossbeam-channel",
  "dispatch2",
  "libc",
+ "lsb-proto",
  "objc2",
  "objc2-foundation",
  "objc2-virtualization",
