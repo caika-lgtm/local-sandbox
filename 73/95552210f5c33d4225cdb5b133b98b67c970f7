@@ -1,0 +1,23 @@
+crates/lsb-vm/src/sandbox.rs
+  s_665230258694d1::t_48e428defa5698 1729-1732,2252-2255
+  s_665230258694d1::t_53ef78d71e6f53 1747,1751-1754,2288-2292
+  s_665230258694d1::t_6b9b83302d2c04 1713-1728,1733-1746,1748-1750,1755-1760,2208-2251,2256-2287,2293-2303,2310-2330
+scripts/windows-smoke.ps1
+  s_665230258694d1::t_6b9b83302d2c04 24-25,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7395552210f5c33d4225cdb5b133b98b67c970f7",
+  "prompts": {},
+  "sessions": {
+    "s_665230258694d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2df8-508c-71f0-ad54-dc229d483e98",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
