@@ -1,8 +1,13 @@
 mod copy;
+mod mount_plan;
 
 pub use copy::{
     join_guest_child, plan_copy_in, validate_copy_out_destination, validate_guest_absolute_path,
     validate_guest_path_component, validate_windows_host_path_lexical, CaseFoldSet, CopyInEntry,
     CopyInEntryKind, CopyInPlan, CopyOutDestination, CopyPathError, CopyPathOperation,
     SymlinkPolicy, WindowsPathKind,
+};
+pub use mount_plan::{
+    plan_windows_mounts, windows_mount_guest_source, WindowsMountImport, WindowsMountMode,
+    WindowsMountPlan, WindowsMountPlanError, WindowsMountSpec, WINDOWS_MOUNT_STAGING_ROOT,
 };
