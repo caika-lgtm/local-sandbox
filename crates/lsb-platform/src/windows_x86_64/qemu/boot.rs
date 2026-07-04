@@ -132,6 +132,7 @@ pub(crate) enum QemuBootErrorKind {
     ProcessStart,
     ProcessStatus,
     GuestBootExited,
+    SerialOutputMissing,
     StopFailed,
 }
 
@@ -147,6 +148,7 @@ impl QemuBootErrorKind {
             Self::ProcessStart => "process_start",
             Self::ProcessStatus => "process_status",
             Self::GuestBootExited => "guest_boot_exited",
+            Self::SerialOutputMissing => "serial_output_missing",
             Self::StopFailed => "stop_failed",
         }
     }
@@ -199,6 +201,10 @@ pub(crate) enum QemuBootError {
         stderr_excerpt: String,
         serial_excerpt: String,
     },
+    SerialOutputMissing {
+        artifacts: QemuBootArtifacts,
+        stderr_excerpt: String,
+    },
     StopFailed {
         source: QemuProcessError,
         artifacts: QemuBootArtifacts,
@@ -217,6 +223,7 @@ impl QemuBootError {
             Self::ProcessStart { .. } => QemuBootErrorKind::ProcessStart,
             Self::ProcessStatus { .. } => QemuBootErrorKind::ProcessStatus,
             Self::GuestBootExited { .. } => QemuBootErrorKind::GuestBootExited,
+            Self::SerialOutputMissing { .. } => QemuBootErrorKind::SerialOutputMissing,
             Self::StopFailed { .. } => QemuBootErrorKind::StopFailed,
         }
     }
@@ -230,6 +237,7 @@ impl QemuBootError {
             | Self::ProcessStart { artifacts, .. }
             | Self::ProcessStatus { artifacts, .. }
             | Self::GuestBootExited { artifacts, .. }
+            | Self::SerialOutputMissing { artifacts, .. }
             | Self::StopFailed { artifacts, .. } => Some(artifacts),
             Self::InvalidConfig { artifacts, .. } | Self::ArtifactIo { artifacts, .. } => {
                 artifacts.as_ref()
@@ -321,6 +329,14 @@ impl fmt::Display for QemuBootError {
                 empty_as_placeholder(serial_excerpt),
                 self.artifact_sentence()
             ),
+            Self::SerialOutputMissing {
+                stderr_excerpt, ..
+            } => write!(
+                f,
+                "Windows QEMU stayed alive for the M05 boot observation window, but serial.log remained empty. Treat this as inconclusive boot evidence; inspect QEMU stderr and kernel console configuration. stderr excerpt: {}.{}",
+                empty_as_placeholder(stderr_excerpt),
+                self.artifact_sentence()
+            ),
             Self::StopFailed { source, .. } => write!(
                 f,
                 "failed to stop Windows QEMU direct boot process: {source}.{}",
@@ -349,11 +365,16 @@ pub(crate) fn launch_windows_qemu_boot(
     let artifacts = resolve_artifacts(&config)?;
     prepare_artifacts(&artifacts)?;
 
-    let kernel_image = require_existing_file("kernel Image", &config.kernel_image, &artifacts)?;
-    let initrd_image = require_existing_file("initramfs", &config.initrd_image, &artifacts)?;
-    let rootfs_image = require_existing_file("rootfs", &config.rootfs_image, &artifacts)?;
-    let memory_mib = memory_mib(config.memory_bytes, &artifacts)?;
-    let vcpu_count = vcpu_count(config.vcpu_count, &artifacts)?;
+    let kernel_image = require_existing_file("kernel Image", &config.kernel_image, &artifacts)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
+    let initrd_image = require_existing_file("initramfs", &config.initrd_image, &artifacts)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
+    let rootfs_image = require_existing_file("rootfs", &config.rootfs_image, &artifacts)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
+    let memory_mib = memory_mib(config.memory_bytes, &artifacts)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
+    let vcpu_count = vcpu_count(config.vcpu_count, &artifacts)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
 
     let preflight = run_preflight().map_err(|source| {
         let error = QemuBootError::Preflight {
@@ -363,7 +384,8 @@ pub(crate) fn launch_windows_qemu_boot(
         record_failure(&artifacts, config.boot_observation_timeout, &error);
         error
     })?;
-    write_preflight_report(&artifacts, &preflight)?;
+    write_preflight_report(&artifacts, &preflight)
+        .map_err(|error| record_error(&artifacts, config.boot_observation_timeout, error))?;
 
     let mut argv_config = QemuArgvBootConfig::direct_linux_boot_raw_rootfs(
         preflight.qemu.path,
@@ -406,7 +428,7 @@ pub(crate) fn launch_windows_qemu_boot(
 
     write_boot_status_file(
         &artifacts,
-        "observed_alive",
+        "serial_observed_alive",
         config.boot_observation_timeout,
         None,
         None,
@@ -605,10 +627,25 @@ fn observe_boot(
         }
 
         if Instant::now() >= deadline {
-            return Ok(());
+            if serial_log_has_output(&artifacts.serial) {
+                return Ok(());
+            }
+            return Err(QemuBootError::SerialOutputMissing {
+                artifacts: artifacts.clone(),
+                stderr_excerpt: read_excerpt(&artifacts.process.stderr),
+            });
         }
         std::thread::sleep(BOOT_POLL_INTERVAL);
     }
+}
+
+fn record_error(
+    artifacts: &QemuBootArtifacts,
+    timeout: Duration,
+    error: QemuBootError,
+) -> QemuBootError {
+    record_failure(artifacts, timeout, &error);
+    error
 }
 
 fn record_failure(artifacts: &QemuBootArtifacts, timeout: Duration, error: &QemuBootError) {
@@ -630,7 +667,7 @@ fn write_boot_status_file(
 ) -> Result<(), QemuBootError> {
     let artifact = QemuBootStatusArtifact {
         state,
-        success_definition: "qemu_process_alive_after_boot_observation_window",
+        success_definition: "qemu_process_alive_after_boot_observation_window_with_serial_output",
         observation_timeout_ms: observation_timeout.as_millis(),
         artifacts: QemuBootStatusFiles {
             serial: file_name(&artifacts.serial),
@@ -688,6 +725,12 @@ fn read_excerpt(path: &Path) -> String {
         .unwrap_or_else(|err| format!("<could not read '{}': {err}>", path.display()))
 }
 
+fn serial_log_has_output(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -705,8 +748,16 @@ fn empty_as_placeholder(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::windows_x86_64::qemu::argv::QemuArgvBuilder;
+    use crate::windows_x86_64::qemu::config::QemuBootConfig;
+
+    const FAKE_BOOT_CHILD_ENV: &str = "LSB_QEMU_BOOT_TEST_CHILD";
+    const FAKE_BOOT_CHILD_TEST_NAME: &str =
+        "windows_x86_64::qemu::boot::tests::fake_boot_child_entrypoint";
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_dir(label: &str) -> PathBuf {
@@ -725,6 +776,54 @@ mod tests {
             512 * 1024 * 1024,
             2,
         )
+    }
+
+    fn fake_child_args() -> Vec<OsString> {
+        ["--exact", "--nocapture", FAKE_BOOT_CHILD_TEST_NAME]
+            .into_iter()
+            .map(OsString::from)
+            .collect()
+    }
+
+    fn fake_command() -> super::super::argv::QemuCommand {
+        let executable = env::current_exe().expect("test executable path should be available");
+        let mut command = QemuArgvBuilder::new(QemuBootConfig::direct_linux_boot(
+            executable,
+            "Image",
+            "initramfs.cpio.gz",
+            "root.qcow2",
+            "serial.log",
+            256,
+            1,
+        ))
+        .build()
+        .expect("fake command should build");
+        command.argv = fake_child_args();
+        command
+    }
+
+    fn fake_supervisor(mode: &str, artifact_dir: PathBuf) -> QemuSupervisor {
+        let mut config = QemuSupervisorConfig::new(fake_command(), artifact_dir);
+        config.startup_timeout = Duration::from_millis(100);
+        config.terminate_timeout = Duration::from_secs(2);
+        config.environment.variables.push((
+            OsString::from(FAKE_BOOT_CHILD_ENV),
+            OsString::from(mode.to_string()),
+        ));
+        QemuSupervisor::new(config)
+    }
+
+    #[test]
+    fn fake_boot_child_entrypoint() {
+        let Ok(mode) = env::var(FAKE_BOOT_CHILD_ENV) else {
+            return;
+        };
+
+        if mode == "sleep" {
+            eprintln!("fake boot child running without serial output");
+            let _ = std::io::stderr().flush();
+            std::thread::sleep(Duration::from_secs(60));
+        }
     }
 
     #[test]
@@ -766,19 +865,23 @@ mod tests {
 
         let artifacts = err.artifacts().expect("artifacts");
         assert!(artifacts.serial.is_file());
+        assert!(artifacts.boot_status.is_file());
+        let status = fs::read_to_string(&artifacts.boot_status).expect("boot status artifact");
+        assert!(status.contains("\"state\": \"failed\""));
+        assert!(status.contains("\"error_kind\": \"asset_missing\""));
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn boot_status_success_artifact_records_observation_definition() {
+    fn boot_status_success_artifact_records_serial_observation_definition() {
         let artifact_dir = temp_dir("status");
         let artifacts = QemuBootArtifacts::new(&artifact_dir);
         fs::create_dir_all(&artifact_dir).expect("artifact dir should be writable");
 
         write_boot_status_file(
             &artifacts,
-            "observed_alive",
+            "serial_observed_alive",
             Duration::from_millis(1500),
             None,
             None,
@@ -786,11 +889,32 @@ mod tests {
         .expect("status should write");
 
         let status = fs::read_to_string(&artifacts.boot_status).expect("status artifact");
-        assert!(status.contains("\"state\": \"observed_alive\""));
-        assert!(status.contains("qemu_process_alive_after_boot_observation_window"));
+        assert!(status.contains("\"state\": \"serial_observed_alive\""));
+        assert!(
+            status.contains("qemu_process_alive_after_boot_observation_window_with_serial_output")
+        );
         assert!(status.contains("\"serial\": \"serial.log\""));
         assert!(status.contains("\"observation_timeout_ms\": 1500"));
 
+        let _ = fs::remove_dir_all(artifact_dir);
+    }
+
+    #[test]
+    fn observe_boot_fails_when_serial_log_stays_empty() {
+        let artifact_dir = temp_dir("empty-serial");
+        let artifacts = QemuBootArtifacts::new(&artifact_dir);
+        prepare_artifacts(&artifacts).expect("artifacts should prepare");
+        let mut supervisor = fake_supervisor("sleep", artifact_dir.clone());
+        supervisor.start().expect("fake supervisor should start");
+
+        let err = observe_boot(&mut supervisor, &artifacts, Duration::from_millis(100))
+            .expect_err("empty serial should fail M05 observation");
+        assert_eq!(err.kind(), QemuBootErrorKind::SerialOutputMissing);
+        assert!(err.to_string().contains("serial.log remained empty"));
+
+        supervisor
+            .terminate()
+            .expect("fake supervisor should terminate");
         let _ = fs::remove_dir_all(artifact_dir);
     }
 
@@ -822,10 +946,24 @@ mod tests {
             config.boot_observation_timeout = timeout;
             config.diagnostic_label = Some("windows-qemu-boot-smoke".to_string());
 
-            let mut boot =
-                launch_windows_qemu_boot(config).expect("QEMU should stay alive during boot smoke");
+            let mut boot = launch_windows_qemu_boot(config)
+                .expect("QEMU should stay alive and produce serial output during boot smoke");
+            let serial = fs::read(&boot.artifacts().serial).expect("serial log should be readable");
+            assert!(
+                !serial.is_empty(),
+                "serial log should contain kernel or init output"
+            );
+            let serial_text = String::from_utf8_lossy(&serial);
+            assert!(
+                serial_text.contains("Linux version")
+                    || serial_text.contains("Kernel command line")
+                    || serial_text.contains("Run /init")
+                    || serial_text.contains("lsb-guest:"),
+                "serial log should contain a kernel/init marker; excerpt: {}",
+                lossy_excerpt(&serial)
+            );
             eprintln!(
-                "Windows QEMU boot smoke observed QEMU alive for {} ms; logs: {}",
+                "Windows QEMU boot smoke observed QEMU alive with serial output for {} ms; logs: {}",
                 boot.observation_timeout().as_millis(),
                 boot.artifacts().summary()
             );
