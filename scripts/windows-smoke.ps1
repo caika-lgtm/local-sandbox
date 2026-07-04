@@ -17,10 +17,11 @@ $missingBootVars = @($bootVars | Where-Object { -not [Environment]::GetEnvironme
 if ($missingBootVars.Count -eq 0) {
   Write-Host "== Windows QEMU direct boot smoke =="
   cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
+  Write-Host "== Windows guest exec smoke =="
+  cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
 } else {
-  Write-Warning "Skipping Windows QEMU direct boot smoke. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
+  Write-Warning "Skipping Windows QEMU direct boot and guest exec smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
 }
 
 # Later:
-# cargo run -p lsb-cli -- run --cpus 2 --memory 2048 -- echo resource-test
 # cargo run -p lsb-cli -- run --port 8080:8080 -- your-port-forward-test
