@@ -1,0 +1,22 @@
+docs/windows-port/agent-workspace/state.md
+  s_184d5e3b064abb::t_a9743706e6ed2e 38
+  s_184d5e3b064abb::t_3e1b9f6a572e2e 7,19,37,48,55,132-134,255
+docs/windows-port/agent-workspace/milestones/13-checkpoint-store-mvp.md
+  s_184d5e3b064abb::t_84246260c4c7e6 3,45,72-73,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9efc311ce9c3c6fade61c6ae6fc60c7ad98b9b9b",
+  "prompts": {},
+  "sessions": {
+    "s_184d5e3b064abb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f31e8-5f63-77d3-b4c9-7e59b8ebcdda",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
