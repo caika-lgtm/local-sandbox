@@ -1,0 +1,26 @@
+bindings/nodejs/test/index.spec.ts
+  s_1eedf061012699::t_3dc7c308880342 248,251
+bindings/nodejs/build.rs
+  s_1eedf061012699::t_7ed38f71273335 7-8
+  s_1eedf061012699::t_7f96081a34ff7f 9-11
+bindings/nodejs/src/error.rs
+  s_1eedf061012699::t_7f96081a34ff7f 9
+bindings/nodejs/Cargo.toml
+  s_1eedf061012699::t_7f96081a34ff7f 25-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4eef2f1a405e80db215689b49803bb14cf476fda",
+  "prompts": {},
+  "sessions": {
+    "s_1eedf061012699": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3242-032d-7483-ad32-09a3066dd5e1",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
