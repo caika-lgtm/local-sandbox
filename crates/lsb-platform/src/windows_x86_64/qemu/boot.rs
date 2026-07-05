@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::windows_x86_64::control::{VirtioSerialControlEndpoint, VirtioSerialControlError};
 
 use super::argv::{QemuArgvBuilder, QemuArgvError};
-use super::config::{QemuBootConfig as QemuArgvBootConfig, QemuNetworkConfig};
+use super::config::{QemuBootConfig as QemuArgvBootConfig, QemuDiskImageFormat, QemuNetworkConfig};
 use super::discovery::{QemuDiscovery, StdQemuDiscoveryHost};
 use super::preflight::{QemuPreflight, QemuPreflightReport};
 use super::process::{
@@ -40,6 +40,7 @@ pub(crate) struct WindowsQemuBootConfig {
     pub kernel_image: PathBuf,
     pub initrd_image: PathBuf,
     pub rootfs_image: PathBuf,
+    pub root_disk_format: QemuDiskImageFormat,
     pub memory_bytes: u64,
     pub vcpu_count: usize,
     pub diagnostic_label: Option<String>,
@@ -63,6 +64,7 @@ impl WindowsQemuBootConfig {
             kernel_image: kernel_image.into(),
             initrd_image: initrd_image.into(),
             rootfs_image: rootfs_image.into(),
+            root_disk_format: QemuDiskImageFormat::Raw,
             memory_bytes,
             vcpu_count,
             diagnostic_label: None,
@@ -638,15 +640,26 @@ pub(crate) fn launch_windows_qemu_boot(
         )
     })?;
 
-    let mut argv_config = QemuArgvBootConfig::direct_linux_boot_raw_rootfs(
-        preflight.qemu.path,
-        kernel_image,
-        initrd_image,
-        rootfs_image,
-        artifacts.serial.clone(),
-        memory_mib,
-        vcpu_count,
-    );
+    let mut argv_config = match config.root_disk_format {
+        QemuDiskImageFormat::Raw => QemuArgvBootConfig::direct_linux_boot_raw_rootfs(
+            preflight.qemu.path,
+            kernel_image,
+            initrd_image,
+            rootfs_image,
+            artifacts.serial.clone(),
+            memory_mib,
+            vcpu_count,
+        ),
+        QemuDiskImageFormat::Qcow2 => QemuArgvBootConfig::direct_linux_boot(
+            preflight.qemu.path,
+            kernel_image,
+            initrd_image,
+            rootfs_image,
+            artifacts.serial.clone(),
+            memory_mib,
+            vcpu_count,
+        ),
+    };
     if let Some(endpoint) = &config.control_endpoint {
         argv_config.control_channel = Some(endpoint.qemu_config());
     }

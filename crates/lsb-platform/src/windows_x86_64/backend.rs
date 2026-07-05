@@ -12,6 +12,7 @@ use super::control::VirtioSerialControlEndpoint;
 use super::errors::unsupported;
 use super::network::qemu_network_config;
 use super::qemu::boot::{launch_windows_qemu_boot, WindowsQemuBoot, WindowsQemuBootConfig};
+use super::qemu::config::QemuDiskImageFormat;
 
 struct WindowsVm {
     config: WindowsVmConfig,
@@ -47,6 +48,7 @@ impl WindowsVm {
             self.config.memory_bytes,
             self.config.cpus,
         );
+        config.root_disk_format = root_disk_format_for_path(&self.config.rootfs_path)?;
         config.control_endpoint = Some(VirtioSerialControlEndpoint::for_instance(
             &instance_dir_for_rootfs(&self.config.rootfs_path)?,
         )?);
@@ -62,7 +64,7 @@ impl WindowsVm {
         if self.config.nbd_requested {
             return Err(unsupported(
                 "NBD/CAS root storage",
-                "M13 checkpoint/store MVP; the current Windows boot path uses the prepared rootfs image directly",
+                "M13 checkpoint/store MVP uses qcow2/raw disk artifacts; Unix-socket NBD/CAS root storage remains unsupported on Windows",
             ));
         }
         if self.config.shared_dir_count > 0 {
@@ -215,6 +217,31 @@ fn instance_dir_for_rootfs(rootfs_path: &str) -> Result<PathBuf> {
         })
 }
 
+fn root_disk_format_for_path(rootfs_path: &str) -> Result<QemuDiskImageFormat> {
+    let path = Path::new(rootfs_path);
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("qcow2") => {
+            Ok(QemuDiskImageFormat::Qcow2)
+        }
+        Some(extension) if extension.eq_ignore_ascii_case("ext4") => Ok(QemuDiskImageFormat::Raw),
+        Some(extension) => Err(unsupported(
+            "Windows root disk image format",
+            &format!(
+                "M13 supports QEMU-compatible raw .ext4 disks and qcow2 .qcow2 overlays, but '{}' has unsupported extension '.{}'",
+                path.display(),
+                extension
+            ),
+        )),
+        None => Err(unsupported(
+            "Windows root disk image format",
+            &format!(
+                "M13 supports QEMU-compatible raw .ext4 disks and qcow2 .qcow2 overlays, but '{}' has no file extension",
+                path.display()
+            ),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +355,48 @@ mod tests {
         );
         assert!(forward_endpoint.pipe_name().starts_with("lsb-12345-"));
         assert!(forward_endpoint.pipe_name().ends_with("-forward"));
+    }
+
+    #[test]
+    fn direct_boot_config_uses_qcow2_for_windows_checkpoint_overlay() {
+        let mut config = test_config();
+        config.rootfs_path = "/tmp/lsb/instances/12345/root.qcow2".to_string();
+        let vm = WindowsVm::new(config);
+
+        let boot_config = vm
+            .direct_boot_config()
+            .expect("qcow2 root disk config should build");
+
+        assert_eq!(boot_config.root_disk_format, QemuDiskImageFormat::Qcow2);
+    }
+
+    #[test]
+    fn direct_boot_config_uses_raw_for_ext4_debug_disk() {
+        let mut config = test_config();
+        config.rootfs_path = "/tmp/lsb/instances/12345/rootfs.ext4".to_string();
+        let vm = WindowsVm::new(config);
+
+        let boot_config = vm
+            .direct_boot_config()
+            .expect("raw ext4 root disk config should build");
+
+        assert_eq!(boot_config.root_disk_format, QemuDiskImageFormat::Raw);
+    }
+
+    #[test]
+    fn direct_boot_config_rejects_unknown_disk_extension() {
+        let mut config = test_config();
+        config.rootfs_path = "/tmp/lsb/instances/12345/root.img".to_string();
+        let vm = WindowsVm::new(config);
+
+        let err = vm
+            .direct_boot_config()
+            .expect_err("unknown disk extension should fail closed");
+        let message = err.to_string();
+
+        assert!(message.contains("Windows root disk image format"));
+        assert!(message.contains(".ext4"));
+        assert!(message.contains(".qcow2"));
     }
 
     #[test]
