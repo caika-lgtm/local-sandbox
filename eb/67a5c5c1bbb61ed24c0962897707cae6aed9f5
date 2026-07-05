@@ -1,0 +1,37 @@
+crates/lsb-platform/src/windows_x86_64/fs/mount_plan.rs
+  s_665230258694d1::t_09ffc3e2daa254 333-337,340-356,360-366
+  s_665230258694d1::t_4a8d5de831cf20 338-339,357-359
+  s_665230258694d1::t_aead08cd43df0c 205-206,215-219
+  s_665230258694d1::t_34d5099ae51fab 220-221
+crates/lsb-platform/src/windows_x86_64/fs/copy.rs
+  s_665230258694d1::t_da3c863842fd99 285-298,302,305,313,315,318
+  s_665230258694d1::t_7e7556c902f32f 595-596,598-604
+  s_665230258694d1::t_71864925bff228 918-928,1157-1171,1175-1204,1208-1233,1235-1236
+  s_665230258694d1::t_97dcb82c4ec8a7 1172-1174,1205-1207
+  s_665230258694d1::t_5352ec06d47b1d 110-122,180,500-504,518-540,576-577,579-594,606-632,634-636,638-656,658-681,684-752,758-774
+  s_665230258694d1::t_133d9248a34c7d 775
+  s_665230258694d1::t_d89d3f03d3d72a 1234
+  s_665230258694d1::t_dbf7f5988eff61 1237
+crates/lsb-platform/src/windows_x86_64/fs/mod.rs
+  s_665230258694d1::t_61966b379f6692 10-11
+crates/lsb-vm/src/sandbox.rs
+  s_665230258694d1::t_b7b5c829e6f3f9 27,362-363,395,718-720,760-767
+  s_665230258694d1::t_4a8d5de831cf20 28-30
+  s_665230258694d1::t_c64951ebb9ccfe 364
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "eb67a5c5c1bbb61ed24c0962897707cae6aed9f5",
+  "prompts": {},
+  "sessions": {
+    "s_665230258694d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f2df8-508c-71f0-ad54-dc229d483e98",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
