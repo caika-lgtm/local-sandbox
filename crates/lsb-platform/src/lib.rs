@@ -290,6 +290,11 @@ pub trait PlatformVm: Send + Sync {
         Vec::new()
     }
     fn connect_control(&self) -> Result<PlatformControlStream>;
+    fn connect_port_forward(&self) -> Result<PlatformControlStream> {
+        Err(anyhow!(
+            "host-to-guest port forwarding stream is not implemented for this platform backend"
+        ))
+    }
     fn connect_to_vsock_port(&self, port: u32) -> Result<TcpStream>;
 }
 

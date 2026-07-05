@@ -8,9 +8,30 @@ use super::super::qemu::config::QemuControlChannelConfig;
 
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PIPE_PREFIX: &str = "lsb";
-const PIPE_SUFFIX: &str = "control";
 const MAX_PIPE_NAME_LEN: usize = 200;
 const RANDOM_SUFFIX_BYTES: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtioSerialEndpointKind {
+    Control,
+    Forward,
+}
+
+impl VirtioSerialEndpointKind {
+    fn pipe_suffix(self) -> &'static str {
+        match self {
+            Self::Control => "control",
+            Self::Forward => "forward",
+        }
+    }
+
+    fn port_name(self) -> &'static str {
+        match self {
+            Self::Control => lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+            Self::Forward => lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtioSerialControlEndpoint {
@@ -22,20 +43,43 @@ pub(crate) struct VirtioSerialControlEndpoint {
 
 impl VirtioSerialControlEndpoint {
     pub(crate) fn for_instance(instance_dir: &Path) -> Result<Self, VirtioSerialControlError> {
-        let label = instance_label(instance_dir);
-        let suffix = random_hex_suffix()?;
-        Self::with_pipe_name(pipe_name_from_parts(&label, &suffix))
+        Self::for_instance_kind(instance_dir, VirtioSerialEndpointKind::Control)
     }
 
+    pub(crate) fn for_forwarding(instance_dir: &Path) -> Result<Self, VirtioSerialControlError> {
+        Self::for_instance_kind(instance_dir, VirtioSerialEndpointKind::Forward)
+    }
+
+    fn for_instance_kind(
+        instance_dir: &Path,
+        kind: VirtioSerialEndpointKind,
+    ) -> Result<Self, VirtioSerialControlError> {
+        let label = instance_label(instance_dir);
+        let suffix = random_hex_suffix()?;
+        Self::with_pipe_name_and_port(
+            pipe_name_from_parts(&label, &suffix, kind.pipe_suffix()),
+            kind.port_name(),
+        )
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn with_pipe_name(
         pipe_name: impl Into<String>,
     ) -> Result<Self, VirtioSerialControlError> {
+        Self::with_pipe_name_and_port(pipe_name, lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME)
+    }
+
+    fn with_pipe_name_and_port(
+        pipe_name: impl Into<String>,
+        port_name: impl Into<String>,
+    ) -> Result<Self, VirtioSerialControlError> {
         let pipe_name = pipe_name.into();
         validate_pipe_name(&pipe_name)?;
+        let port_name = port_name.into();
         Ok(Self {
             pipe_path: windows_pipe_path(&pipe_name),
             pipe_name,
-            port_name: lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME.to_string(),
+            port_name,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
         })
     }
@@ -285,8 +329,8 @@ fn random_hex_suffix() -> Result<String, VirtioSerialControlError> {
     Ok(hex_bytes(&bytes))
 }
 
-fn pipe_name_from_parts(label: &str, suffix: &str) -> String {
-    format!("{PIPE_PREFIX}-{label}-{suffix}-{PIPE_SUFFIX}")
+fn pipe_name_from_parts(label: &str, random_suffix: &str, endpoint_suffix: &str) -> String {
+    format!("{PIPE_PREFIX}-{label}-{random_suffix}-{endpoint_suffix}")
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -327,10 +371,26 @@ mod tests {
 
     #[test]
     fn generated_pipe_name_has_instance_label_and_random_suffix_shape() {
-        let name = pipe_name_from_parts("abc-123", "00112233445566778899aabbccddeeff");
+        let name = pipe_name_from_parts("abc-123", "00112233445566778899aabbccddeeff", "control");
 
         assert_eq!(name, "lsb-abc-123-00112233445566778899aabbccddeeff-control");
         validate_pipe_name(&name).expect("generated name should be valid");
+    }
+
+    #[test]
+    fn forwarding_endpoint_uses_dedicated_port_name_and_suffix() {
+        let endpoint = VirtioSerialControlEndpoint::for_instance_kind(
+            Path::new("/tmp/lsb/instances/abc"),
+            VirtioSerialEndpointKind::Forward,
+        )
+        .expect("forwarding endpoint should build");
+
+        assert_eq!(
+            endpoint.port_name(),
+            lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME
+        );
+        assert!(endpoint.pipe_name().starts_with("lsb-abc-"));
+        assert!(endpoint.pipe_name().ends_with("-forward"));
     }
 
     #[test]

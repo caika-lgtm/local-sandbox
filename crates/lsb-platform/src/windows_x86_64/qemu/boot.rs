@@ -32,6 +32,7 @@ const SERIAL_OBSERVED_SUCCESS_DEFINITION: &str =
 const GUEST_READY_SUCCESS_DEFINITION: &str =
     "localsandbox_guest_ready_frame_received_over_control_transport";
 const CONTROL_STATE_OPENING_FOR_READY: &str = "opening_control_channel_for_guest_ready";
+const CONTROL_STATE_OPENING_FORWARD_CHANNEL: &str = "opening_forwarding_channel";
 const CONTROL_STATE_WAITING_FOR_READY: &str = "control_channel_open_waiting_for_guest_ready";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,7 @@ pub(crate) struct WindowsQemuBootConfig {
     pub boot_observation_timeout: Duration,
     pub guest_ready_timeout: Duration,
     pub control_endpoint: Option<VirtioSerialControlEndpoint>,
+    pub forward_endpoint: Option<VirtioSerialControlEndpoint>,
 }
 
 impl WindowsQemuBootConfig {
@@ -67,6 +69,7 @@ impl WindowsQemuBootConfig {
             boot_observation_timeout: DEFAULT_BOOT_OBSERVATION_TIMEOUT,
             guest_ready_timeout: DEFAULT_GUEST_READY_TIMEOUT,
             control_endpoint: None,
+            forward_endpoint: None,
         }
     }
 }
@@ -112,6 +115,7 @@ pub(crate) struct WindowsQemuBoot {
     observation_timeout: Duration,
     control_endpoint: Option<VirtioSerialControlEndpoint>,
     control_stream: Option<crate::PlatformControlStream>,
+    forward_stream: Option<crate::PlatformControlStream>,
     guest_ready: Option<GuestReady>,
     guest_ready_elapsed: Option<Duration>,
 }
@@ -152,6 +156,20 @@ impl WindowsQemuBoot {
             .try_clone()
             .map_err(|error| VirtioSerialControlError::OpenFailed {
                 detail: format!("failed to clone the established control pipe handle: {error}"),
+            })
+    }
+
+    pub(crate) fn open_port_forward(
+        &self,
+    ) -> Result<crate::PlatformControlStream, VirtioSerialControlError> {
+        let stream = self
+            .forward_stream
+            .as_ref()
+            .ok_or(VirtioSerialControlError::EndpointUnavailable)?;
+        stream
+            .try_clone()
+            .map_err(|error| VirtioSerialControlError::OpenFailed {
+                detail: format!("failed to clone the established forwarding pipe handle: {error}"),
             })
     }
 
@@ -509,7 +527,7 @@ impl fmt::Display for QemuBootError {
                 ..
             } => write!(
                 f,
-                "the Windows guest advertised unsupported runtime capabilities during readiness: {}. The current Windows backend accepts the base guest-ready handshake, M08 exec, and the M09 file_range_io capability; unknown capabilities require later mux/mount/network/checkpoint milestones. serial excerpt: {}.{}",
+                "the Windows guest advertised unsupported runtime capabilities during readiness: {}. The current Windows backend accepts the base guest-ready handshake, M08 exec, M09 file_range_io, and M11 port_forward capabilities; unknown capabilities require later mux/network/checkpoint milestones. serial excerpt: {}.{}",
                 capability_summary(capabilities),
                 empty_as_placeholder(serial_excerpt),
                 self.artifact_sentence()
@@ -630,6 +648,9 @@ pub(crate) fn launch_windows_qemu_boot(
     if let Some(endpoint) = &config.control_endpoint {
         argv_config.control_channel = Some(endpoint.qemu_config());
     }
+    if let Some(endpoint) = &config.forward_endpoint {
+        argv_config.forward_channel = Some(endpoint.qemu_config());
+    }
     argv_config.diagnostic_label = config.diagnostic_label.clone();
 
     let command = QemuArgvBuilder::new(argv_config)
@@ -675,6 +696,31 @@ pub(crate) fn launch_windows_qemu_boot(
                     &mut supervisor,
                     &artifacts,
                     control_open_started_at.elapsed(),
+                );
+                record_failure(
+                    &artifacts,
+                    config.guest_ready_timeout,
+                    observation_goal,
+                    &error,
+                );
+                let _ = supervisor.terminate();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+
+    let forward_stream = if let Some(endpoint) = &config.forward_endpoint {
+        let forward_open_started_at = Instant::now();
+        match endpoint.open() {
+            Ok(stream) => Some(stream),
+            Err(source) => {
+                let error = map_forward_open_error(
+                    source,
+                    &mut supervisor,
+                    &artifacts,
+                    forward_open_started_at.elapsed(),
                 );
                 record_failure(
                     &artifacts,
@@ -774,6 +820,7 @@ pub(crate) fn launch_windows_qemu_boot(
         observation_timeout: config.boot_observation_timeout,
         control_endpoint: config.control_endpoint,
         control_stream,
+        forward_stream,
         guest_ready,
         guest_ready_elapsed,
     })
@@ -802,6 +849,37 @@ fn map_control_open_error(
             artifacts,
             elapsed,
             CONTROL_STATE_OPENING_FOR_READY,
+        ),
+        Ok(
+            QemuProcessState::Running | QemuProcessState::Starting | QemuProcessState::NotStarted,
+        ) => QemuBootError::ControlOpen {
+            source,
+            artifacts: artifacts.clone(),
+        },
+        Err(source) => QemuBootError::ProcessStatus {
+            source,
+            artifacts: artifacts.clone(),
+        },
+    }
+}
+
+fn map_forward_open_error(
+    source: VirtioSerialControlError,
+    supervisor: &mut QemuSupervisor,
+    artifacts: &QemuBootArtifacts,
+    elapsed: Duration,
+) -> QemuBootError {
+    match supervisor.try_status() {
+        Ok(
+            state @ (QemuProcessState::Exited
+            | QemuProcessState::Failed
+            | QemuProcessState::Terminated),
+        ) => guest_ready_process_exited_error(
+            state,
+            supervisor,
+            artifacts,
+            elapsed,
+            CONTROL_STATE_OPENING_FORWARD_CHANNEL,
         ),
         Ok(
             QemuProcessState::Running | QemuProcessState::Starting | QemuProcessState::NotStarted,
@@ -1417,7 +1495,12 @@ fn capability_summary(capabilities: &[String]) -> String {
 fn unsupported_guest_capabilities(capabilities: &[String]) -> Vec<String> {
     capabilities
         .iter()
-        .filter(|capability| capability.as_str() != lsb_proto::CAP_FILE_RANGE_IO)
+        .filter(|capability| {
+            !matches!(
+                capability.as_str(),
+                lsb_proto::CAP_FILE_RANGE_IO | lsb_proto::CAP_PORT_FORWARD
+            )
+        })
         .cloned()
         .collect()
 }
@@ -1614,6 +1697,9 @@ mod tests {
         ready
             .capabilities
             .push(lsb_proto::CAP_FILE_RANGE_IO.to_string());
+        ready
+            .capabilities
+            .push(lsb_proto::CAP_PORT_FORWARD.to_string());
 
         write_boot_status_file(
             &artifacts,
@@ -1635,6 +1721,7 @@ mod tests {
         assert!(status.contains("\"transport\": \"virtio_serial\""));
         assert!(status.contains("\"guest_version\": \"guest-test\""));
         assert!(status.contains(lsb_proto::CAP_FILE_RANGE_IO));
+        assert!(status.contains(lsb_proto::CAP_PORT_FORWARD));
 
         let _ = fs::remove_dir_all(artifact_dir);
     }
@@ -1653,11 +1740,14 @@ mod tests {
         guest_ready_frame(&ready)
     }
 
-    fn supported_file_range_ready_frame() -> Cursor<Vec<u8>> {
+    fn supported_windows_ready_frame() -> Cursor<Vec<u8>> {
         let mut ready = GuestReady::new(GuestTransport::VirtioSerial, "guest-test");
         ready
             .capabilities
             .push(lsb_proto::CAP_FILE_RANGE_IO.to_string());
+        ready
+            .capabilities
+            .push(lsb_proto::CAP_PORT_FORWARD.to_string());
         guest_ready_frame(&ready)
     }
 
@@ -1728,7 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_guest_ready_accepts_file_range_capability() {
+    fn wait_for_guest_ready_accepts_windows_runtime_capabilities() {
         let artifact_dir = temp_dir("ready-file-range-capability");
         let artifacts = QemuBootArtifacts::new(&artifact_dir);
         prepare_artifacts(&artifacts).expect("artifacts should prepare");
@@ -1739,14 +1829,17 @@ mod tests {
             &mut supervisor,
             &artifacts,
             Duration::from_secs(1),
-            supported_file_range_ready_frame(),
+            supported_windows_ready_frame(),
             GuestTransport::VirtioSerial,
         )
-        .expect("file-range capability should be accepted");
+        .expect("Windows runtime capabilities should be accepted");
 
         assert_eq!(
             result.message.capabilities,
-            [lsb_proto::CAP_FILE_RANGE_IO.to_string()]
+            [
+                lsb_proto::CAP_FILE_RANGE_IO.to_string(),
+                lsb_proto::CAP_PORT_FORWARD.to_string()
+            ]
         );
 
         supervisor
@@ -2018,7 +2111,10 @@ mod tests {
             assert_eq!(ready.transport, GuestTransport::VirtioSerial);
             assert_eq!(
                 ready.capabilities,
-                [lsb_proto::CAP_FILE_RANGE_IO.to_string()]
+                [
+                    lsb_proto::CAP_FILE_RANGE_IO.to_string(),
+                    lsb_proto::CAP_PORT_FORWARD.to_string()
+                ]
             );
             let status = fs::read_to_string(&boot.artifacts().boot_status)
                 .expect("boot status should be readable");

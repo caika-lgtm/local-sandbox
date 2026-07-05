@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::config::{
     QemuBootConfig, QemuControlChannelConfig, QemuDiskConfig, QemuKernelAppend, QemuQmpEndpoint,
     QemuSerialConfig, CONTROL_BUS_ID, CONTROL_CHARDEV_ID, DEFAULT_CPU_MODEL, DEFAULT_MACHINE_TYPE,
-    ROOT_DRIVE_ID,
+    FORWARD_CHARDEV_ID, ROOT_DRIVE_ID,
 };
 use super::preflight::PRODUCTION_ACCELERATOR;
 
@@ -93,7 +93,7 @@ impl QemuArgvBuilder {
             "-append",
             kernel_append(
                 &self.config.kernel_append,
-                self.config.control_channel.is_some(),
+                self.config.control_channel.is_some() || self.config.forward_channel.is_some(),
             )?,
         );
         push_pair_redacted(
@@ -109,8 +109,28 @@ impl QemuArgvBuilder {
         );
         push_serial(&mut command, &self.config.serial)?;
 
-        if let Some(control_channel) = &self.config.control_channel {
-            push_control_channel(&mut command, control_channel)?;
+        if self.config.control_channel.is_some() || self.config.forward_channel.is_some() {
+            push_pair(
+                &mut command,
+                "-device",
+                format!("virtio-serial-pci,id={CONTROL_BUS_ID}"),
+            );
+            if let Some(control_channel) = &self.config.control_channel {
+                push_virtio_serial_port(
+                    &mut command,
+                    control_channel,
+                    CONTROL_CHARDEV_ID,
+                    "<control-pipe>",
+                )?;
+            }
+            if let Some(forward_channel) = &self.config.forward_channel {
+                push_virtio_serial_port(
+                    &mut command,
+                    forward_channel,
+                    FORWARD_CHARDEV_ID,
+                    "<forward-pipe>",
+                )?;
+            }
         }
 
         if let Some(qmp) = &self.config.qmp {
@@ -313,33 +333,28 @@ fn push_serial(
     Ok(())
 }
 
-fn push_control_channel(
+fn push_virtio_serial_port(
     command: &mut QemuCommandParts,
-    control_channel: &QemuControlChannelConfig,
+    channel: &QemuControlChannelConfig,
+    chardev_id: &'static str,
+    diagnostic_pipe_name: &'static str,
 ) -> Result<(), QemuArgvError> {
-    validate_qemu_suboption("control_channel.pipe_name", &control_channel.pipe_name)?;
-    validate_qemu_suboption("control_channel.port_name", &control_channel.port_name)?;
+    validate_qemu_suboption("virtio_serial.pipe_name", &channel.pipe_name)?;
+    validate_qemu_suboption("virtio_serial.port_name", &channel.port_name)?;
+    validate_qemu_suboption("virtio_serial.chardev_id", chardev_id)?;
 
-    push_pair(
-        command,
-        "-device",
-        format!("virtio-serial-pci,id={CONTROL_BUS_ID}"),
-    );
     push_pair_redacted(
         command,
         "-chardev",
-        format!(
-            "pipe,id={CONTROL_CHARDEV_ID},path={}",
-            control_channel.pipe_name
-        ),
-        format!("pipe,id={CONTROL_CHARDEV_ID},path=<control-pipe>"),
+        format!("pipe,id={chardev_id},path={}", channel.pipe_name),
+        format!("pipe,id={chardev_id},path={diagnostic_pipe_name}"),
     );
     push_pair(
         command,
         "-device",
         format!(
-            "virtserialport,chardev={CONTROL_CHARDEV_ID},name={}",
-            control_channel.port_name
+            "virtserialport,chardev={chardev_id},name={}",
+            channel.port_name
         ),
     );
     Ok(())
@@ -545,6 +560,31 @@ mod tests {
     }
 
     #[test]
+    fn virtio_serial_forwarding_channel_argv_keeps_no_network_default() {
+        let mut config = base_config();
+        config.control_channel = Some(QemuControlChannelConfig::named_pipe("lsb-abc-control"));
+        config.forward_channel = Some(QemuControlChannelConfig::forwarding_named_pipe(
+            "lsb-abc-forward",
+        ));
+
+        let command = build(config);
+        let argv = argv_as_strings(&command);
+
+        assert!(argv.windows(2).any(|pair| pair == ["-nic", "none"]));
+        assert!(!argv.iter().any(|arg| arg == "-netdev"));
+        assert!(!argv.iter().any(|arg| arg.contains("hostfwd")));
+        assert!(argv
+            .iter()
+            .any(|arg| arg == "virtio-serial-pci,id=lsbserial0"));
+        assert!(argv
+            .iter()
+            .any(|arg| arg == "pipe,id=lsbfwd,path=lsb-abc-forward"));
+        assert!(argv
+            .iter()
+            .any(|arg| { arg == "virtserialport,chardev=lsbfwd,name=org.localsandbox.forward" }));
+    }
+
+    #[test]
     fn windows_paths_with_spaces_preserve_argument_boundaries_and_escape_drive_commas() {
         let config = QemuBootConfig::direct_linux_boot(
             r"C:\Program Files\QEMU\qemu-system-x86_64.exe",
@@ -650,6 +690,19 @@ mod tests {
         assert!(display.contains("path=<control-pipe>"));
         assert!(display.contains("pipe:<qmp-pipe>,server=on,wait=off"));
         assert!(command.sanitized_argv().contains(&"<initrd>".to_string()));
+    }
+
+    #[test]
+    fn sanitized_display_redacts_forward_pipe_name() {
+        let mut config = base_config();
+        config.forward_channel = Some(QemuControlChannelConfig::forwarding_named_pipe(
+            "lsb-TOPSECRET-forward",
+        ));
+
+        let display = build(config).sanitized_display();
+
+        assert!(!display.contains("TOPSECRET"));
+        assert!(display.contains("path=<forward-pipe>"));
     }
 
     #[test]

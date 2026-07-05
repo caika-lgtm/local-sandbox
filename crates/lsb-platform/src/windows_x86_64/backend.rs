@@ -49,6 +49,9 @@ impl WindowsVm {
         config.control_endpoint = Some(VirtioSerialControlEndpoint::for_instance(
             &instance_dir_for_rootfs(&self.config.rootfs_path)?,
         )?);
+        config.forward_endpoint = Some(VirtioSerialControlEndpoint::for_forwarding(
+            &instance_dir_for_rootfs(&self.config.rootfs_path)?,
+        )?);
         config.diagnostic_label = Some("windows-direct-linux-boot".to_string());
         Ok(config)
     }
@@ -168,6 +171,25 @@ impl PlatformVm for WindowsVm {
         running_boot.open_control().map_err(|err| {
             anyhow!(
                 "Windows virtio-serial control transport is unavailable: {err}. Captured artifacts: {}",
+                running_boot.artifacts().summary()
+            )
+        })
+    }
+
+    fn connect_port_forward(&self) -> Result<PlatformControlStream> {
+        let boot = self
+            .boot
+            .lock()
+            .map_err(|_| anyhow!("Windows QEMU boot state lock poisoned"))?;
+        let Some(running_boot) = boot.as_ref() else {
+            return Err(anyhow!(
+                "Windows virtio-serial port-forward transport is unavailable because the VM is not running; start the VM before opening port forwarding"
+            ));
+        };
+
+        running_boot.open_port_forward().map_err(|err| {
+            anyhow!(
+                "Windows virtio-serial port-forward transport is unavailable: {err}. Captured artifacts: {}",
                 running_boot.artifacts().summary()
             )
         })
@@ -293,6 +315,9 @@ mod tests {
         let endpoint = boot_config
             .control_endpoint
             .expect("Windows boot should configure control endpoint");
+        let forward_endpoint = boot_config
+            .forward_endpoint
+            .expect("Windows boot should configure forwarding endpoint");
 
         assert_eq!(
             endpoint.port_name(),
@@ -300,5 +325,11 @@ mod tests {
         );
         assert!(endpoint.pipe_name().starts_with("lsb-12345-"));
         assert!(endpoint.pipe_name().ends_with("-control"));
+        assert_eq!(
+            forward_endpoint.port_name(),
+            lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME
+        );
+        assert!(forward_endpoint.pipe_name().starts_with("lsb-12345-"));
+        assert!(forward_endpoint.pipe_name().ends_with("-forward"));
     }
 }

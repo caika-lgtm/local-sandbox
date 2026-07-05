@@ -6,7 +6,9 @@ pub(crate) const DEFAULT_KERNEL_CONSOLE: &str = "ttyS0";
 pub(crate) const DEFAULT_ROOT_DEVICE: &str = "/dev/vda";
 pub(crate) const CONTROL_BUS_ID: &str = "lsbserial0";
 pub(crate) const CONTROL_CHARDEV_ID: &str = "lsbctl";
+pub(crate) const FORWARD_CHARDEV_ID: &str = "lsbfwd";
 pub(crate) const CONTROL_PORT_NAME: &str = lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME;
+pub(crate) const FORWARD_PORT_NAME: &str = lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME;
 pub(crate) const ROOT_DRIVE_ID: &str = "root";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +21,7 @@ pub(crate) struct QemuBootConfig {
     pub kernel_append: QemuKernelAppend,
     pub serial: QemuSerialConfig,
     pub control_channel: Option<QemuControlChannelConfig>,
+    pub forward_channel: Option<QemuControlChannelConfig>,
     pub qmp: Option<QemuQmpEndpoint>,
     pub diagnostic_label: Option<String>,
 }
@@ -85,6 +88,7 @@ impl QemuBootConfig {
             kernel_append: QemuKernelAppend::direct_boot_default(),
             serial: QemuSerialConfig::File(serial_log.into()),
             control_channel: None,
+            forward_channel: None,
             qmp: None,
             diagnostic_label: None,
         }
@@ -205,6 +209,13 @@ impl QemuControlChannelConfig {
         Self {
             pipe_name: pipe_name.into(),
             port_name: CONTROL_PORT_NAME.to_string(),
+        }
+    }
+
+    pub(crate) fn forwarding_named_pipe(pipe_name: impl Into<String>) -> Self {
+        Self {
+            pipe_name: pipe_name.into(),
+            port_name: FORWARD_PORT_NAME.to_string(),
         }
     }
 }

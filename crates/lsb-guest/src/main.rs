@@ -32,6 +32,9 @@ mod control_transport {
                 ready
                     .capabilities
                     .push(lsb_proto::CAP_FILE_RANGE_IO.to_string());
+                ready
+                    .capabilities
+                    .push(lsb_proto::CAP_PORT_FORWARD.to_string());
                 Some(ready)
             }
         }
@@ -99,7 +102,10 @@ mod control_transport {
             assert_eq!(ready.protocol_version, lsb_proto::PROTOCOL_VERSION);
             assert_eq!(ready.transport, lsb_proto::GuestTransport::VirtioSerial);
             assert_eq!(ready.guest_version, env!("CARGO_PKG_VERSION"));
-            assert_eq!(ready.capabilities, [lsb_proto::CAP_FILE_RANGE_IO]);
+            assert_eq!(
+                ready.capabilities,
+                [lsb_proto::CAP_FILE_RANGE_IO, lsb_proto::CAP_PORT_FORWARD]
+            );
         }
 
         #[test]
@@ -1722,6 +1728,7 @@ mod guest {
                 let resp = ForwardResponse {
                     status: "error".into(),
                     message: Some(format!("invalid request: {}", e)),
+                    session_id: None,
                 };
                 let _ = frame::send_json(&mut stream, frame::FWD_RESP, &resp);
                 return;
@@ -1736,6 +1743,7 @@ mod guest {
                 let resp = ForwardResponse {
                     status: "error".into(),
                     message: Some(format!("connection refused: {}", e)),
+                    session_id: None,
                 };
                 let _ = frame::send_json(&mut stream, frame::FWD_RESP, &resp);
                 return;
@@ -1746,6 +1754,7 @@ mod guest {
         let resp = ForwardResponse {
             status: "ok".into(),
             message: None,
+            session_id: None,
         };
         if frame::send_json(&mut stream, frame::FWD_RESP, &resp).is_err() {
             return;
@@ -1786,24 +1795,26 @@ mod guest {
         }
     }
 
-    fn open_virtio_serial_control_stream() -> File {
+    fn open_virtio_serial_stream(port_name: &str, label: &str) -> File {
         loop {
             match control_transport::discover_virtio_serial_device(
                 Path::new("/dev"),
                 Path::new("/sys/class/virtio-ports"),
-                lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME,
+                port_name,
             ) {
                 Ok(Some(path)) => match OpenOptions::new().read(true).write(true).open(&path) {
                     Ok(file) => {
                         eprintln!(
-                            "lsb-guest: virtio-serial control port opened at {}",
+                            "lsb-guest: virtio-serial {} port opened at {}",
+                            label,
                             path.display()
                         );
                         return file;
                     }
                     Err(err) => {
                         eprintln!(
-                            "lsb-guest: failed to open virtio-serial control port at {}: {}",
+                            "lsb-guest: failed to open virtio-serial {} port at {}: {}",
+                            label,
                             path.display(),
                             err
                         );
@@ -1811,14 +1822,14 @@ mod guest {
                 },
                 Ok(None) => {
                     eprintln!(
-                        "lsb-guest: virtio-serial control port '{}' not found yet",
-                        lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME
+                        "lsb-guest: virtio-serial {} port '{}' not found yet",
+                        label, port_name
                     );
                 }
                 Err(err) => {
                     eprintln!(
-                        "lsb-guest: failed to scan virtio-serial control ports: {}",
-                        err
+                        "lsb-guest: failed to scan virtio-serial {} ports: {}",
+                        label, err
                     );
                 }
             }
@@ -1826,12 +1837,21 @@ mod guest {
         }
     }
 
+    fn open_virtio_serial_control_stream() -> File {
+        open_virtio_serial_stream(lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME, "control")
+    }
+
+    fn open_virtio_serial_forward_stream() -> File {
+        open_virtio_serial_stream(lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME, "forward")
+    }
+
     fn run_virtio_serial_control_loop() -> ! {
         eprintln!(
             "lsb-guest: using virtio-serial control transport '{}'",
             lsb_proto::VIRTIO_SERIAL_CONTROL_PORT_NAME
         );
-        eprintln!("lsb-guest: port forwarding over virtio-serial is deferred until M11");
+
+        std::thread::spawn(run_virtio_serial_forward_loop);
 
         loop {
             let stream = open_virtio_serial_control_stream();
@@ -1842,6 +1862,228 @@ mod guest {
             eprintln!("lsb-guest: virtio-serial control stream closed; reopening");
             reap_zombies();
         }
+    }
+
+    struct ActiveForward {
+        session_id: u64,
+        guest_tcp: std::net::TcpStream,
+        host_closed: bool,
+    }
+
+    fn run_virtio_serial_forward_loop() {
+        eprintln!(
+            "lsb-guest: using virtio-serial forwarding transport '{}'",
+            lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME
+        );
+
+        loop {
+            let stream = open_virtio_serial_forward_stream();
+            handle_virtio_serial_forward_stream(stream);
+            eprintln!("lsb-guest: virtio-serial forwarding stream closed; reopening");
+            reap_zombies();
+        }
+    }
+
+    fn handle_virtio_serial_forward_stream<S>(stream: S)
+    where
+        S: ControlStream,
+    {
+        stream.configure_for_lsb();
+        let mut reader = match stream.try_clone_stream() {
+            Ok(reader) => reader,
+            Err(err) => {
+                eprintln!("lsb-guest: failed to clone forwarding stream: {}", err);
+                return;
+            }
+        };
+        let mut writer = stream;
+        let mut active: Option<ActiveForward> = None;
+
+        loop {
+            let (msg_type, payload) = match frame::read_frame(&mut reader) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(err) => {
+                    eprintln!("lsb-guest: forwarding frame read failed: {}", err);
+                    break;
+                }
+            };
+
+            match msg_type {
+                frame::FWD_REQ => {
+                    if active.as_ref().is_some_and(|session| !session.host_closed) {
+                        send_forward_open_error(
+                            &mut writer,
+                            None,
+                            "another forwarding session is already active".to_string(),
+                        );
+                        continue;
+                    }
+                    active = None;
+
+                    let req: ForwardRequest = match serde_json::from_slice(&payload) {
+                        Ok(req) => req,
+                        Err(err) => {
+                            send_forward_open_error(
+                                &mut writer,
+                                None,
+                                format!("invalid request: {err}"),
+                            );
+                            continue;
+                        }
+                    };
+                    let Some(session_id) = req.session_id else {
+                        send_forward_open_error(
+                            &mut writer,
+                            None,
+                            "missing forwarding session id".to_string(),
+                        );
+                        continue;
+                    };
+                    if req.port == 0 {
+                        send_forward_open_error(
+                            &mut writer,
+                            Some(session_id),
+                            "invalid guest port 0".to_string(),
+                        );
+                        continue;
+                    }
+
+                    let tcp_stream = match std::net::TcpStream::connect(("127.0.0.1", req.port)) {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            eprintln!("lsb-guest: forward to port {} failed: {}", req.port, err);
+                            send_forward_open_error(
+                                &mut writer,
+                                Some(session_id),
+                                format!("connection refused: {err}"),
+                            );
+                            continue;
+                        }
+                    };
+
+                    let _ = tcp_stream.set_nodelay(true);
+                    if let Err(err) = send_forward_open_ok(&mut writer, session_id) {
+                        eprintln!("lsb-guest: failed to send forward response: {}", err);
+                        break;
+                    }
+
+                    let tcp_read = match tcp_stream.try_clone() {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            eprintln!("lsb-guest: failed to clone guest target stream: {}", err);
+                            let _ = frame::write_frame(
+                                &mut writer,
+                                frame::FWD_CLOSE,
+                                &lsb_proto::encode_forward_close(session_id),
+                            );
+                            continue;
+                        }
+                    };
+                    let writer_clone = match writer.try_clone_stream() {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            eprintln!("lsb-guest: failed to clone forwarding writer: {}", err);
+                            break;
+                        }
+                    };
+                    std::thread::spawn(move || {
+                        relay_guest_tcp_to_forward(session_id, tcp_read, writer_clone);
+                    });
+
+                    active = Some(ActiveForward {
+                        session_id,
+                        guest_tcp: tcp_stream,
+                        host_closed: false,
+                    });
+                }
+                frame::FWD_DATA => {
+                    let Ok((session_id, data)) = lsb_proto::decode_forward_payload(&payload) else {
+                        eprintln!("lsb-guest: invalid forwarding data frame");
+                        continue;
+                    };
+                    let Some(session) = active.as_mut() else {
+                        continue;
+                    };
+                    if session.session_id != session_id || session.host_closed {
+                        continue;
+                    }
+                    if let Err(err) = session.guest_tcp.write_all(data) {
+                        eprintln!("lsb-guest: writing forwarded bytes failed: {}", err);
+                        let _ = frame::write_frame(
+                            &mut writer,
+                            frame::FWD_CLOSE,
+                            &lsb_proto::encode_forward_close(session_id),
+                        );
+                        active = None;
+                    }
+                }
+                frame::FWD_CLOSE => {
+                    let Ok(session_id) = lsb_proto::decode_forward_close(&payload) else {
+                        eprintln!("lsb-guest: invalid forwarding close frame");
+                        continue;
+                    };
+                    if let Some(session) = active.as_mut() {
+                        if session.session_id == session_id {
+                            let _ = session.guest_tcp.shutdown(std::net::Shutdown::Write);
+                            session.host_closed = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn send_forward_open_ok(writer: &mut impl Write, session_id: u64) -> std::io::Result<()> {
+        frame::send_json(
+            writer,
+            frame::FWD_RESP,
+            &ForwardResponse {
+                status: "ok".to_string(),
+                message: None,
+                session_id: Some(session_id),
+            },
+        )
+    }
+
+    fn send_forward_open_error(writer: &mut impl Write, session_id: Option<u64>, message: String) {
+        let _ = frame::send_json(
+            writer,
+            frame::FWD_RESP,
+            &ForwardResponse {
+                status: "error".to_string(),
+                message: Some(message),
+                session_id,
+            },
+        );
+    }
+
+    fn relay_guest_tcp_to_forward<S>(
+        session_id: u64,
+        mut tcp_read: std::net::TcpStream,
+        mut writer: S,
+    ) where
+        S: ControlStream,
+    {
+        let mut buffer = [0u8; 16 * 1024];
+        loop {
+            match tcp_read.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let payload = lsb_proto::encode_forward_payload(session_id, &buffer[..n]);
+                    if frame::write_frame(&mut writer, frame::FWD_DATA, &payload).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = frame::write_frame(
+            &mut writer,
+            frame::FWD_CLOSE,
+            &lsb_proto::encode_forward_close(session_id),
+        );
     }
 
     fn run_vsock_control_loop() -> ! {
