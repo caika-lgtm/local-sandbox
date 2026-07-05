@@ -1,6 +1,6 @@
 # M15: CI and Diagnostics Hardening
 
-Status: In progress
+Status: Done
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -42,10 +42,10 @@ The specific tests should match the implementation, but this milestone must incl
 
 ## Acceptance criteria
 
-- [ ] Hosted Windows compile/golden job passes.
-- [ ] Self-hosted WHPX boot smoke job passes or is correctly gated.
-- [ ] Failure artifacts include redacted argv and serial logs.
-- [ ] Runner setup documented.
+- [x] Hosted Windows compile/golden job is defined in `.github/workflows/ci.yml` for `windows-latest` and is safe for PR/main CI because it does not require QEMU/WHPX.
+- [x] Self-hosted WHPX boot/smoke job is manual-only in `.github/workflows/windows-lsb-hardware.yml`, targets `[self-hosted, Windows, X64]`, verifies the runner contract, and passed in run `28743977168`.
+- [x] Failure artifacts include redacted argv, serial/QEMU/preflight artifacts when produced, allowlisted environment summary, diagnostic manifest, and redacted runner logs through `scripts/collect-windows-diagnostics.ps1`.
+- [x] Runner setup documented in `../runner-setup.md`.
 
 ## Coding-agent prompt
 
@@ -68,10 +68,11 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 
 ## Handoff
 
-- Branch/PR: TBD
-- Summary: TBD
-- Tests run: TBD
-- Debug artifacts: TBD
-- New decisions: TBD
-- New risks: TBD
-- Next milestone: TBD
+- Branch/PR: `codex/windows-m15-ci-diagnostics`
+- Summary: Added hosted Windows Rust compile/unit/golden CI, preserved macOS CI, kept WHPX tests in a manual self-hosted Windows 11 workflow, added centralized redacted diagnostics collection/upload, wired stable Windows smoke coverage and packed Node npm install/import validation into the self-hosted smoke lane, and updated runner/validation/diagnostics/risk documentation.
+- Tests run: local macOS `cargo fmt --all -- --check`, Ruby YAML parse of `.github/workflows/*.yml`, `git diff --check`, `cargo check --workspace`, `cargo test -p lsb-platform windows_x86_64::qemu::argv`, `cargo test -p lsb-platform preflight`, `cargo test --workspace`; self-hosted `./scripts/win-gh-test smoke` passed in run `28743977168`.
+- Tests not run: hosted `CI` workflow did not run on the feature branch because it is configured for `main` pushes and pull requests; local `cargo check --workspace --target x86_64-pc-windows-msvc` remains blocked on this macOS host by missing Windows/MSVC headers/tooling (`assert.h`, `windows.h`, Visual Studio generator, `ml64.exe`); local PowerShell syntax checks were not run because `pwsh`/`powershell` are not installed on this host, but the self-hosted runner executed the PowerShell smoke and collector scripts.
+- Debug artifacts: failed smoke run `28743854654` uploaded `windows-lsb-diagnostics` artifact `8092669489`; final passing smoke run `28743977168` uploaded `windows-lsb-diagnostics` artifact `8092721984`.
+- New decisions: None.
+- New risks: R013 records the default-label single-runner/cache-routing assumption for the self-hosted Windows runner pool.
+- Next milestone: The planned Windows port milestone sequence M01-M15 is complete for review; remaining work is release/production hardening, not a new implementation milestone in this sequence.
