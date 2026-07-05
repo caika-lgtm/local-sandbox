@@ -14,7 +14,8 @@ npm install @local-sandbox/lsb-nodejs
 
 The published npm package is split into a root package plus a platform package. On supported hosts,
 `npm` resolves and installs either `@local-sandbox/lsb-nodejs-darwin-arm64` or
-`@local-sandbox/lsb-nodejs-darwin-x64` automatically.
+`@local-sandbox/lsb-nodejs-darwin-x64` on macOS, or
+`@local-sandbox/lsb-nodejs-win32-x64-msvc` on Windows x64, automatically.
 
 For local development, use Corepack to run the Yarn version pinned in
 [`package.json`](./package.json):
@@ -26,7 +27,7 @@ corepack yarn install
 ## Requirements
 
 - Node.js 18+
-- macOS 14+ on Apple Silicon or Intel x86_64
+- macOS 14+ on Apple Silicon or Intel x86_64, or Windows 11 on x86_64
 - Runtime assets initialized with `initSandbox()` or `lsb init`. `Sandbox.start()` still expects
   the lsb runtime data directory to already contain `Image`, `rootfs.ext4`, and
   `initramfs.cpio.gz`; it does not download assets implicitly.
@@ -34,6 +35,10 @@ corepack yarn install
   `com.apple.security.virtualization` entitlement. For a project-local workflow, sign a copied
   Node binary with [`../../lsb.entitlements`](../../lsb.entitlements), or use
   [`test:signed-node`](./package.json) as a reference.
+- On Windows, QEMU is not bundled. Install a Windows QEMU build that provides
+  `qemu-system-x86_64.exe` and `qemu-img.exe`, enable Windows Hypervisor Platform, and make QEMU
+  discoverable through `LSB_QEMU` or `PATH`. The Windows backend requires WHPX; it does not fall
+  back to TCG for production Node users.
 
 ## Usage
 
@@ -250,8 +255,16 @@ virtualization after signing the local Node copy, the command will surface that 
 
 ## Platform Notes
 
-- Supported targets: macOS on Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`).
-- Installation is limited to supported macOS architectures. Unsupported platforms should fail during
-  `npm install` instead of installing a package that only errors at runtime.
+- Supported targets: macOS on Apple Silicon (`aarch64-apple-darwin`), macOS Intel
+  (`x86_64-apple-darwin`), and Windows 11 x64 (`x86_64-pc-windows-msvc` /
+  `win32-x64-msvc`).
+- Installation is limited to supported operating systems and CPU families where npm can express
+  them. Unsupported platform packages should fail clearly instead of masking native-module load
+  failures.
 - The published native binaries live in the platform packages
-  `@local-sandbox/lsb-nodejs-darwin-arm64` and `@local-sandbox/lsb-nodejs-darwin-x64`.
+  `@local-sandbox/lsb-nodejs-darwin-arm64`, `@local-sandbox/lsb-nodejs-darwin-x64`, and
+  `@local-sandbox/lsb-nodejs-win32-x64-msvc`.
+- If the Windows native package is missing, the load error should name
+  `@local-sandbox/lsb-nodejs-win32-x64-msvc` or `lsb-nodejs.win32-x64-msvc.node`. If the native
+  module loads but QEMU, WHPX, or runtime assets are not ready, `Sandbox.start()` surfaces the
+  Rust backend preflight error with the relevant remediation.
