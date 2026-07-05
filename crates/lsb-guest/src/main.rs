@@ -2163,14 +2163,18 @@ mod guest {
                             "missing test server response",
                         )
                     })?;
-                    if args.next().is_some() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "unexpected extra test server arguments",
-                        ));
-                    }
+                    let ready_path = args.next();
 
                     let listener = TcpListener::bind(("127.0.0.1", port))?;
+                    if let Some(path) = ready_path {
+                        if args.next().is_some() {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "unexpected extra test server arguments",
+                            ));
+                        }
+                        std::fs::write(path, b"ready\n")?;
+                    }
                     let (mut stream, _) = listener.accept()?;
                     stream.write_all(response.as_bytes())?;
                     stream.shutdown(std::net::Shutdown::Write)?;

@@ -2778,9 +2778,11 @@ mod tests {
                 .expect("Windows port-forward smoke should reach guest ready");
 
             let result = (|| -> Result<()> {
+                let ready_path = "/tmp/lsb-port-forward-ready";
                 let server_script = format!(
                     "set -eu; \
-                     /usr/bin/lsb-init --lsb-test-tcp-server {guest_port} lsb-port-forward-ok \
+                     rm -f {ready_path}; \
+                     /usr/bin/lsb-init --lsb-test-tcp-server {guest_port} lsb-port-forward-ok {ready_path} \
                      >/tmp/lsb-port-forward.log 2>&1 & echo $! >/tmp/lsb-port-forward.pid"
                 );
                 let mut stdout = Vec::new();
@@ -2794,6 +2796,23 @@ mod tests {
                     String::from_utf8_lossy(&stdout),
                     String::from_utf8_lossy(&stderr)
                 );
+
+                let ready_deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    if sandbox.read_file(ready_path).is_ok() {
+                        break;
+                    }
+                    if std::time::Instant::now() >= ready_deadline {
+                        let server_log = sandbox
+                            .read_file("/tmp/lsb-port-forward.log")
+                            .unwrap_or_default();
+                        anyhow::bail!(
+                            "guest port-forward test server did not become ready: {}",
+                            String::from_utf8_lossy(&server_log)
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
 
                 let forward = sandbox.start_port_forwarding(&[PortMapping {
                     host_port,
