@@ -15,7 +15,12 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = join(testDir, '..')
 const entrypointPath = join(projectRoot, 'index.js')
 const packageVersion = (require(join(projectRoot, 'package.json')) as { version: string }).version
-const defaultRuntimeDataDir = join(process.env.HOME ?? '/tmp', '.local', 'share', 'lsb')
+const defaultRuntimeDataDir = join(
+  process.env.HOME ?? process.env.USERPROFILE ?? tmpdir(),
+  '.local',
+  'share',
+  'lsb',
+)
 
 const localBindingCandidatesByPlatform: Partial<
   Record<NodeJS.Platform, Partial<Record<string, string[]>>>
@@ -24,18 +29,8 @@ const localBindingCandidatesByPlatform: Partial<
     x64: ['lsb-nodejs.darwin-universal.node', 'lsb-nodejs.darwin-x64.node'],
     arm64: ['lsb-nodejs.darwin-universal.node', 'lsb-nodejs.darwin-arm64.node'],
   },
-  linux: {
-    x64: ['lsb-nodejs.linux-x64-musl.node', 'lsb-nodejs.linux-x64-gnu.node'],
-    arm64: ['lsb-nodejs.linux-arm64-musl.node', 'lsb-nodejs.linux-arm64-gnu.node'],
-    arm: ['lsb-nodejs.linux-arm-gnueabihf.node'],
-    riscv64: ['lsb-nodejs.linux-riscv64-gnu.node'],
-    ppc64: ['lsb-nodejs.linux-ppc64-gnu.node'],
-    s390x: ['lsb-nodejs.linux-s390x-gnu.node'],
-  },
   win32: {
     x64: ['lsb-nodejs.win32-x64-msvc.node'],
-    ia32: ['lsb-nodejs.win32-ia32-msvc.node'],
-    arm64: ['lsb-nodejs.win32-arm64-msvc.node'],
   },
 }
 
@@ -95,7 +90,10 @@ function loadBuiltEntrypoint(): NodejsBinding {
 }
 
 function isSupportedRuntimePlatform() {
-  return process.platform === 'darwin' && (process.arch === 'arm64' || process.arch === 'x64')
+  return (
+    (process.platform === 'darwin' && (process.arch === 'arm64' || process.arch === 'x64')) ||
+    (process.platform === 'win32' && process.arch === 'x64')
+  )
 }
 
 function makeGuestPath(label: string) {
@@ -107,7 +105,7 @@ function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean } = {}) 
     return {
       ok: false as const,
       message:
-        'positive VM tests require macOS on x64 or Apple Silicon; non-darwin coverage is limited to load and validation checks',
+        'positive VM tests require macOS on x64/Apple Silicon or Windows 11 x64; other platform coverage is limited to load and validation checks',
     }
   }
 
@@ -123,7 +121,7 @@ function getRuntimeReadiness(options: { requireDefaultDataDir?: boolean } = {}) 
     }
   }
 
-  if (!hasVirtualizationEntitlement()) {
+  if (process.platform === 'darwin' && !hasVirtualizationEntitlement()) {
     const nodeBinary = resolveNodeBinaryForEntitlementCheck()
     return {
       ok: false as const,
