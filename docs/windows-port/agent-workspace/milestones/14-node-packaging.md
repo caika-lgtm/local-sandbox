@@ -1,6 +1,6 @@
 # M14: Node Packaging
 
-Status: In progress
+Status: Review
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -40,10 +40,10 @@ The specific tests should match the implementation, but this milestone must incl
 
 ## Acceptance criteria
 
-- [ ] Windows Node package builds.
-- [ ] Install/import smoke passes.
-- [ ] Existing darwin package behavior unchanged.
-- [ ] Unsupported platforms fail clearly.
+- [ ] Windows Node package builds. Workflow/package metadata now includes `win32-x64-msvc`; local macOS validation could not build the Windows native artifact.
+- [ ] Install/import smoke passes. Pending Windows 11 x86_64 Node smoke validation with the expected backend prerequisites.
+- [x] Existing darwin package behavior unchanged.
+- [x] Unsupported platforms fail clearly.
 
 ## Coding-agent prompt
 
@@ -62,14 +62,19 @@ Implement only this milestone. Preserve public CLI/SDK/Node APIs and existing ma
 
 ## Security checklist
 
-Complete the checklist in `../security-checklist.md`. Record any new risk in `../risk-register.md`.
+- No-network default preserved: yes; this is packaging-only and does not change Windows QEMU networking defaults.
+- Secret redaction verified: not applicable; no secret-handling or diagnostics redaction paths changed.
+- Host file exposure reviewed: not applicable; no mount/copy/checkpoint data-plane behavior changed.
+- Control/QMP endpoint privacy reviewed: not applicable; no control transport or QMP behavior changed.
+- Process cleanup reviewed: not applicable; no VM lifecycle or process cleanup behavior changed.
+- New risks added to `../risk-register.md`: no.
 
 ## Handoff
 
-- Branch/PR: TBD
-- Summary: TBD
-- Tests run: TBD
-- Debug artifacts: TBD
-- New decisions: TBD
-- New risks: TBD
-- Next milestone: TBD
+- Branch/PR: `codex/windows-m14-node-packaging`
+- Summary: Added `win32-x64-msvc` package metadata, `x86_64-pc-windows-msvc` NAPI target wiring, hosted Windows build/release workflow entries, Windows x86_64 SDK-backed native binding compilation, Windows-specific missing-native loader messaging, package-resolution/API-shape tests, and Windows package docs. No QEMU binary is bundled.
+- Tests run: `cargo fmt --all -- --check` passed; `git diff --check` passed; `cargo check --workspace` passed; `cargo test --workspace` passed; `cargo check --manifest-path bindings/nodejs/Cargo.toml` passed; `cargo check --manifest-path bindings/nodejs/Cargo.toml --target x86_64-pc-windows-msvc` was blocked on this macOS host by missing Windows/MSVC headers/tooling; `NPM_CONFIG_CACHE=/private/tmp/lsb-npm-cache COREPACK_HOME=/private/tmp/lsb-corepack-cache YARN_GLOBAL_FOLDER=/private/tmp/lsb-yarn-global YARN_CACHE_FOLDER=/private/tmp/lsb-yarn-cache npx --yes corepack@latest yarn install --immutable` passed; the same environment with `yarn lint` passed; the same environment with `yarn test` passed 31 AVA tests with VM-backed tests skipped for missing macOS virtualization entitlement; the same environment with `yarn napi build --platform --release --js index.js --dts index.d.ts` passed for the host target; `node scripts/patch-generated-loader.mjs` passed.
+- Debug artifacts: none committed. Local generated native binding/build artifacts remain ignored.
+- New decisions: none.
+- New risks: none.
+- Next milestone: M15 CI and diagnostics hardening, including Windows 11 x86_64 Node package build/install/import smoke and a Node-level backend preflight smoke that verifies QEMU/WHPX failures surface from Rust/backend errors rather than generic native-module load errors.
