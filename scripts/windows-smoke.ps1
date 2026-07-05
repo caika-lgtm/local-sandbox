@@ -23,9 +23,11 @@ if ($missingBootVars.Count -eq 0) {
   cargo test -p lsb-vm windows_qemu_copy_transfer_smoke -- --ignored --nocapture
   Write-Host "== Windows mount MVP smoke =="
   cargo test -p lsb-vm windows_qemu_mount_mvp_smoke -- --ignored --nocapture
+  Write-Host "== Windows port-forward smoke =="
+  cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture
 } else {
-  Write-Warning "Skipping Windows QEMU direct boot, guest exec, guest copy transfer, and mount MVP smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
+  Write-Warning "Skipping Windows QEMU direct boot, guest exec, guest copy transfer, mount MVP, and port-forward smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
 }
 
 # Later:
-# cargo run -p lsb-cli -- run --port 8080:8080 -- your-port-forward-test
+# cargo run -p lsb-cli -- run --port 8080:8080 -- your-network-policy-test

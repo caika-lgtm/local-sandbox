@@ -1,11 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::io::{BufReader, BufWriter};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-#[cfg(target_os = "macos")]
+#[cfg(any(
+    target_os = "macos",
+    all(target_os = "windows", target_arch = "x86_64")
+))]
 use std::net::{Shutdown, TcpListener};
 #[cfg(target_os = "macos")]
 use std::os::fd::AsRawFd;
@@ -15,7 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "macos")]
+#[cfg(any(
+    target_os = "macos",
+    all(target_os = "windows", target_arch = "x86_64")
+))]
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -43,8 +49,13 @@ use lsb_proto::{
     RenameRequest, StatRequest, StatResponse, WatchRequest, WriteFileRequest, WriteFileResponse,
     CAP_FILE_RANGE_IO, FILE_TRANSFER_CHUNK_SIZE,
 };
+#[cfg(any(
+    target_os = "macos",
+    all(target_os = "windows", target_arch = "x86_64")
+))]
+use lsb_proto::{ForwardRequest, ForwardResponse};
 #[cfg(target_os = "macos")]
-use lsb_proto::{ForwardRequest, ForwardResponse, VSOCK_PORT, VSOCK_PORT_FORWARD};
+use lsb_proto::{VSOCK_PORT, VSOCK_PORT_FORWARD};
 
 #[cfg(not(target_os = "macos"))]
 #[derive(Debug)]
@@ -82,6 +93,8 @@ fn unsupported_runtime(capability: &'static str, milestone: &'static str) -> any
 const MS_RDONLY: u64 = 1;
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 static COPY_OUT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+static PORT_FORWARD_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub enum MountConfig {
@@ -209,6 +222,8 @@ impl VmConfigBuilder {
             windows_mounts: Mutex::new(mount_plan.windows_imports),
             #[cfg(not(target_os = "macos"))]
             control_session: Mutex::new(()),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            port_forward_session: Arc::new(Mutex::new(())),
         })
     }
 }
@@ -222,6 +237,8 @@ pub struct Sandbox {
     windows_mounts: Mutex<Vec<WindowsMountImport>>,
     #[cfg(not(target_os = "macos"))]
     control_session: Mutex<()>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    port_forward_session: Arc<Mutex<()>>,
 }
 
 struct SandboxMountPlan {
@@ -1157,15 +1174,20 @@ impl Sandbox {
     /// listeners when dropped.
     #[cfg(target_os = "macos")]
     pub fn start_port_forwarding(&self, forwards: &[PortMapping]) -> Result<PortForwardHandle> {
+        validate_port_mappings(forwards)?;
         let stop = Arc::new(AtomicBool::new(false));
         let mut listeners = Vec::new();
+        let mut bound_listeners = Vec::new();
 
         for mapping in forwards {
-            let addr = format!("127.0.0.1:{}", mapping.host_port);
-            let tcp_listener = TcpListener::bind(&addr)
-                .with_context(|| format!("Failed to bind port {}", mapping.host_port))?;
+            let tcp_listener = bind_loopback_listener(mapping.host_port).with_context(|| {
+                format!("failed to bind host loopback port {}", mapping.host_port)
+            })?;
             tcp_listener.set_nonblocking(true)?;
+            bound_listeners.push((mapping.clone(), tcp_listener));
+        }
 
+        for (mapping, tcp_listener) in bound_listeners {
             let guest_port = mapping.guest_port;
             let vm = Arc::clone(&self.vm);
             let stop_flag = stop.clone();
@@ -1213,13 +1235,86 @@ impl Sandbox {
         })
     }
 
-    /// Windows port forwarding must preserve no-network-by-default. Until the
-    /// transport is implemented, fail before opening any host listener.
-    #[cfg(not(target_os = "macos"))]
+    /// Windows port forwarding preserves no-network-by-default by using the
+    /// dedicated LocalSandbox virtio-serial forwarding channel.
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    pub fn start_port_forwarding(&self, forwards: &[PortMapping]) -> Result<PortForwardHandle> {
+        validate_port_mappings(forwards)?;
+        self.vm.connect_port_forward().context(
+            "opening Windows virtio-serial port-forward transport before binding listeners",
+        )?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut listeners = Vec::new();
+        let mut bound_listeners = Vec::new();
+
+        for mapping in forwards {
+            let tcp_listener = bind_loopback_listener(mapping.host_port).with_context(|| {
+                format!("failed to bind host loopback port {}", mapping.host_port)
+            })?;
+            tcp_listener.set_nonblocking(true)?;
+            bound_listeners.push((mapping.clone(), tcp_listener));
+        }
+
+        for (mapping, tcp_listener) in bound_listeners {
+            let guest_port = mapping.guest_port;
+            let vm = Arc::clone(&self.vm);
+            let stop_flag = stop.clone();
+            let session_lock = Arc::clone(&self.port_forward_session);
+
+            eprintln!(
+                "lsb: forwarding 127.0.0.1:{} -> guest:{}",
+                mapping.host_port, mapping.guest_port
+            );
+
+            let handle = std::thread::spawn(move || {
+                while !stop_flag.load(Ordering::Relaxed) {
+                    match tcp_listener.accept() {
+                        Ok((tcp_stream, _)) => {
+                            let _ = tcp_stream.set_nonblocking(false);
+                            let vm = Arc::clone(&vm);
+                            let session_lock = Arc::clone(&session_lock);
+                            std::thread::spawn(move || {
+                                if let Err(error) = handle_windows_forward_connection(
+                                    tcp_stream,
+                                    vm.as_ref(),
+                                    guest_port,
+                                    session_lock,
+                                ) {
+                                    tracing::debug!("port forward error: {}", error);
+                                }
+                            });
+                        }
+                        Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Err(error) => {
+                            if !stop_flag.load(Ordering::Relaxed) {
+                                tracing::debug!("accept error on port forward listener: {}", error);
+                            }
+                            break;
+                        }
+                    }
+                }
+            });
+
+            listeners.push(handle);
+        }
+
+        Ok(PortForwardHandle {
+            stop,
+            threads: listeners,
+        })
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    )))]
     pub fn start_port_forwarding(&self, _forwards: &[PortMapping]) -> Result<PortForwardHandle> {
         Err(unsupported_runtime(
             "port forwarding",
-            "M11 port forwarding; no listener was opened",
+            "M11 port forwarding targets Windows x86_64 and macOS only; no listener was opened",
         ))
     }
 
@@ -1587,6 +1682,34 @@ fn metadata_is_symlink_or_reparse(metadata: &fs::Metadata) -> bool {
 
 // --- Port forwarding ---
 
+fn validate_port_mappings(forwards: &[PortMapping]) -> Result<()> {
+    let mut host_ports = HashSet::new();
+    for mapping in forwards {
+        if mapping.host_port == 0 {
+            bail!("invalid port forward host port 0; use an explicit TCP port");
+        }
+        if mapping.guest_port == 0 {
+            bail!("invalid port forward guest port 0; use an explicit TCP port");
+        }
+        if !host_ports.insert(mapping.host_port) {
+            bail!(
+                "duplicate port forward host port {}; each host listener port must be unique",
+                mapping.host_port
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "macos",
+    all(target_os = "windows", target_arch = "x86_64")
+))]
+fn bind_loopback_listener(host_port: u16) -> Result<TcpListener> {
+    let addr = format!("127.0.0.1:{host_port}");
+    TcpListener::bind(&addr).with_context(|| format!("binding {addr}"))
+}
+
 /// Handle returned by `start_port_forwarding`. Signals all listener threads
 /// to stop and joins them when dropped.
 pub struct PortForwardHandle {
@@ -1615,13 +1738,19 @@ fn handle_forward_connection(
     let _ = vsock_stream.set_nodelay(true);
 
     // Send forward request
-    let req = ForwardRequest { port: guest_port };
+    let req = ForwardRequest {
+        port: guest_port,
+        session_id: None,
+    };
     frame::send_json(&mut vsock_stream, frame::FWD_REQ, &req)?;
 
     // Read response frame
-    let (_msg_type, payload) = frame::read_frame(&mut vsock_stream)
+    let (msg_type, payload) = frame::read_frame(&mut vsock_stream)
         .context("reading forward response")?
         .context("guest closed connection during forward handshake")?;
+    if msg_type != frame::FWD_RESP {
+        bail!("unexpected frame type 0x{msg_type:02x} in forward response");
+    }
     let resp: ForwardResponse =
         serde_json::from_slice(&payload).context("parsing forward response")?;
 
@@ -1635,6 +1764,145 @@ fn handle_forward_connection(
     // Bidirectional relay between TCP and vsock
     relay(tcp_stream, vsock_stream);
     Ok(())
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn handle_windows_forward_connection(
+    tcp_stream: TcpStream,
+    vm: &dyn PlatformVm,
+    guest_port: u16,
+    session_lock: Arc<Mutex<()>>,
+) -> Result<()> {
+    let _session_guard = session_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Windows port-forward session lock poisoned"))?;
+    let forward_stream = vm
+        .connect_port_forward()
+        .context("opening Windows virtio-serial port-forward stream")?;
+    let mut writer = forward_stream
+        .try_clone()
+        .context("cloning Windows port-forward writer")?;
+    let mut reader = forward_stream;
+    let session_id = PORT_FORWARD_SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let req = ForwardRequest {
+        port: guest_port,
+        session_id: Some(session_id),
+    };
+    frame::send_json(&mut writer, frame::FWD_REQ, &req)
+        .context("sending Windows port-forward request")?;
+
+    let (msg_type, payload) =
+        read_response_frame(&mut reader, "port forward").context("reading forward response")?;
+    if msg_type != frame::FWD_RESP {
+        bail!("unexpected frame type 0x{msg_type:02x} in forward response");
+    }
+    let resp: ForwardResponse =
+        serde_json::from_slice(&payload).context("parsing forward response")?;
+    if resp.session_id != Some(session_id) {
+        bail!(
+            "guest returned mismatched forward session id {:?}; expected {}",
+            resp.session_id,
+            session_id
+        );
+    }
+    if resp.status != "ok" {
+        bail!(
+            "guest refused forward to port {}: {}",
+            guest_port,
+            resp.message.unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
+
+    relay_windows_forward(tcp_stream, reader, writer, session_id)
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn relay_windows_forward(
+    tcp_stream: TcpStream,
+    mut forward_reader: PlatformControlStream,
+    mut forward_writer: PlatformControlStream,
+    session_id: u64,
+) -> Result<()> {
+    let mut tcp_read = tcp_stream
+        .try_clone()
+        .context("cloning host TCP stream for port-forward upload")?;
+    let mut tcp_write = tcp_stream;
+    let upload_done = Arc::new(AtomicBool::new(false));
+    let upload_done_thread = Arc::clone(&upload_done);
+
+    let upload = std::thread::spawn(move || {
+        let mut buffer = [0u8; 16 * 1024];
+        loop {
+            match tcp_read.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let payload = lsb_proto::encode_forward_payload(session_id, &buffer[..n]);
+                    if frame::write_frame(&mut forward_writer, frame::FWD_DATA, &payload).is_err() {
+                        upload_done_thread.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = frame::write_frame(
+            &mut forward_writer,
+            frame::FWD_CLOSE,
+            &lsb_proto::encode_forward_close(session_id),
+        );
+        upload_done_thread.store(true, Ordering::Relaxed);
+    });
+
+    let result = loop {
+        match frame::read_frame(&mut forward_reader).context("reading forwarded guest bytes")? {
+            Some((frame::FWD_DATA, payload)) => {
+                let (frame_session_id, data) =
+                    lsb_proto::decode_forward_payload(&payload).context("decoding forward data")?;
+                if frame_session_id != session_id {
+                    bail!(
+                        "received forward data for session {}; expected {}",
+                        frame_session_id,
+                        session_id
+                    );
+                }
+                tcp_write
+                    .write_all(data)
+                    .context("writing forwarded guest bytes to host TCP client")?;
+            }
+            Some((frame::FWD_CLOSE, payload)) => {
+                let frame_session_id =
+                    lsb_proto::decode_forward_close(&payload).context("decoding forward close")?;
+                if frame_session_id == session_id {
+                    break Ok(());
+                }
+                bail!(
+                    "received forward close for session {}; expected {}",
+                    frame_session_id,
+                    session_id
+                );
+            }
+            Some((frame::ERROR, payload)) => {
+                bail!(
+                    "guest port-forward error: {}",
+                    String::from_utf8_lossy(&payload)
+                );
+            }
+            Some((other, _)) => {
+                bail!("unexpected frame type 0x{other:02x} in forwarded data stream");
+            }
+            None => {
+                bail!("Windows port-forward channel closed before guest closed the session");
+            }
+        }
+    };
+
+    let _ = tcp_write.shutdown(Shutdown::Both);
+    let _ = upload.join();
+    if !upload_done.load(Ordering::Relaxed) {
+        tracing::debug!("port forward upload thread ended before close frame was sent");
+    }
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -1696,6 +1964,8 @@ mod tests {
             windows_mounts: Mutex::new(Vec::new()),
             #[cfg(not(target_os = "macos"))]
             control_session: Mutex::new(()),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            port_forward_session: Arc::new(Mutex::new(())),
         }
     }
 
@@ -1844,6 +2114,55 @@ mod tests {
             MountRequest::Overlay { source, target }
                 if source == "mount0" && target == "/workspace"
         ));
+    }
+
+    #[test]
+    fn port_forward_validation_rejects_zero_ports() {
+        let host_zero = validate_port_mappings(&[PortMapping {
+            host_port: 0,
+            guest_port: 80,
+        }])
+        .expect_err("host port 0 should fail");
+        assert!(host_zero.to_string().contains("host port 0"));
+
+        let guest_zero = validate_port_mappings(&[PortMapping {
+            host_port: 8080,
+            guest_port: 0,
+        }])
+        .expect_err("guest port 0 should fail");
+        assert!(guest_zero.to_string().contains("guest port 0"));
+    }
+
+    #[test]
+    fn port_forward_validation_rejects_duplicate_host_ports() {
+        let err = validate_port_mappings(&[
+            PortMapping {
+                host_port: 8080,
+                guest_port: 80,
+            },
+            PortMapping {
+                host_port: 8080,
+                guest_port: 81,
+            },
+        ])
+        .expect_err("duplicate host listener ports should fail");
+
+        assert!(err
+            .to_string()
+            .contains("duplicate port forward host port 8080"));
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn port_forward_listener_binds_ipv4_loopback() {
+        let listener = bind_loopback_listener(0).expect("ephemeral loopback bind should work");
+        let addr = listener.local_addr().expect("listener addr");
+
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_ne!(addr.port(), 0);
     }
 
     #[test]
@@ -2389,6 +2708,94 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires Windows 11 x86_64 with WHPX, QEMU, disposable LocalSandbox assets, and busybox/nc in the guest"]
+    fn windows_qemu_port_forward_smoke() {
+        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+        {
+            eprintln!("skipping Windows QEMU port-forward smoke on non-Windows host");
+        }
+
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            let kernel = required_env_path("LSB_WINDOWS_BOOT_KERNEL");
+            let initrd = required_env_path("LSB_WINDOWS_BOOT_INITRD");
+            let rootfs = required_env_path("LSB_WINDOWS_BOOT_ROOTFS");
+            let host_port = reserve_loopback_port();
+            let guest_port = 18080;
+
+            let sandbox = Sandbox::builder()
+                .kernel(kernel.display().to_string())
+                .initrd(initrd.display().to_string())
+                .rootfs(rootfs.display().to_string())
+                .console(false)
+                .build()
+                .expect("Windows port-forward smoke sandbox should build");
+
+            sandbox
+                .start()
+                .expect("Windows port-forward smoke should reach guest ready");
+
+            let result = (|| -> Result<()> {
+                let server_script = format!(
+                    "set -eu; \
+                     if command -v busybox >/dev/null 2>&1; then NC='busybox nc'; \
+                     elif command -v nc >/dev/null 2>&1; then NC='nc'; \
+                     else echo 'guest lacks busybox/nc for port-forward smoke' >&2; exit 127; fi; \
+                     (while true; do printf 'lsb-port-forward-ok' | $NC -l -p {guest_port}; done) \
+                     >/tmp/lsb-port-forward.log 2>&1 & echo $! >/tmp/lsb-port-forward.pid"
+                );
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                let code =
+                    sandbox.exec(&["/bin/sh", "-c", &server_script], &mut stdout, &mut stderr)?;
+                assert_eq!(
+                    code,
+                    0,
+                    "guest server setup failed: stdout={}, stderr={}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                );
+
+                let forward = sandbox.start_port_forwarding(&[PortMapping {
+                    host_port,
+                    guest_port,
+                }])?;
+
+                let mut client = TcpStream::connect(("127.0.0.1", host_port))
+                    .context("connecting to forwarded host loopback port")?;
+                client.set_read_timeout(Some(Duration::from_secs(5)))?;
+                let mut response = String::new();
+                client
+                    .read_to_string(&mut response)
+                    .context("reading forwarded response")?;
+                assert_eq!(response, "lsb-port-forward-ok");
+
+                drop(forward);
+                std::thread::sleep(Duration::from_millis(100));
+                assert!(
+                    TcpStream::connect(("127.0.0.1", host_port)).is_err(),
+                    "forwarded host port should close after dropping PortForwardHandle"
+                );
+
+                let _ = sandbox.exec(
+                    &[
+                        "/bin/sh",
+                        "-c",
+                        "test -f /tmp/lsb-port-forward.pid && kill $(cat /tmp/lsb-port-forward.pid) || true",
+                    ],
+                    &mut std::io::sink(),
+                    &mut std::io::sink(),
+                );
+                Ok(())
+            })();
+
+            let stop_result = sandbox.stop();
+            result.expect("Windows port-forward smoke should pass");
+            stop_result.expect("Windows port-forward smoke QEMU should stop cleanly");
+        }
+    }
+
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     fn required_env_path(name: &str) -> PathBuf {
         std::env::var_os(name)
@@ -2415,5 +2822,11 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         root
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn reserve_loopback_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve ephemeral loopback port");
+        listener.local_addr().expect("reserved addr").port()
     }
 }
