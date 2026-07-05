@@ -72,7 +72,7 @@ Hardware workflow:
 | M08 | Non-interactive `exec` command returns stdout/stderr/exit status over the existing LocalSandbox protocol; Windows streaming `spawn`/kill returns an explicit unsupported error until muxing exists. |
 | M09 | Copy-in/copy-out tests for files, dirs, empty dirs, large files, path traversal rejection. |
 | M10 | Mount MVP conformance tests for read-only source semantics and isolated writes. |
-| M11 | Host-to-guest port forwarding works without guest NIC. |
+| M11 | Host-to-guest port forwarding works without guest NIC or QEMU `hostfwd`; host listeners bind loopback, invalid/duplicate ports fail clearly, Windows argv remains `-nic none`, and the WHPX smoke reaches a guest-local TCP service through host `127.0.0.1`. |
 | M12 | No-network default test; allowed-domain test; blocked-domain/direct-IP test; secret substitution redaction test. |
 | M13 | Checkpoint create/list/restore/delete tests for Windows MVP path. |
 | M14 | Node package install/import smoke on Windows after Rust backend works. |
@@ -124,6 +124,9 @@ cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
 # Run guest exec smoke once M08 exists
 cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
 
+# Run host-to-guest port-forward smoke once M11 exists
+cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture
+
 # Run all Windows integration tests once M15 exists
 cargo test --workspace --features windows-integration -- --ignored --nocapture
 ```
@@ -147,6 +150,20 @@ smoke on a Windows 11 x86_64 WHPX runner:
 cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
 cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
 ```
+
+M11 port-forward smoke uses the same asset variables and should be run after
+the exec/copy/mount smokes on a Windows 11 x86_64 WHPX runner:
+
+```powershell
+cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture
+```
+
+The M11 smoke starts a simple guest-local TCP service through the existing exec
+path, forwards a host `127.0.0.1:<host_port>` listener to that guest port over
+the LocalSandbox forwarding channel, verifies response bytes from the Windows
+host, drops the forwarding handle, and verifies the host listener closes. It
+does not validate general Windows networking or any arbitrary guest outbound
+access.
 
 If the asset variables are absent, the smoke lane must print an explicit skip
 message and must not claim direct boot validation.

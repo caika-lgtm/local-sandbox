@@ -1,6 +1,6 @@
 # M11: Port Forwarding Without Guest Network
 
-Status: In progress
+Status: Review
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -41,10 +41,10 @@ The specific tests should match the implementation, but this milestone must incl
 
 ## Acceptance criteria
 
-- [ ] Start guest service and reach it from host loopback.
-- [ ] Golden argv still has no NIC.
-- [ ] Port conflict produces clear error.
-- [ ] Forwarding stops cleanly when sandbox exits.
+- [ ] Start guest service and reach it from host loopback. Pending final self-hosted WHPX smoke result.
+- [x] Golden argv still has no NIC.
+- [x] Port conflict produces clear error.
+- [x] Forwarding stops cleanly when sandbox exits.
 
 ## Coding-agent prompt
 
@@ -67,10 +67,10 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 
 ## Handoff
 
-- Branch/PR: TBD
-- Summary: TBD
-- Tests run: TBD
-- Debug artifacts: TBD
-- New decisions: TBD
-- New risks: TBD
-- Next milestone: TBD
+- Branch/PR: `codex/windows-m11-port-forwarding`
+- Summary: Implemented Windows host-to-guest port forwarding over a dedicated private LocalSandbox virtio-serial channel, with host listeners bound to `127.0.0.1`, guest proxying only to guest loopback, and QEMU argv remaining `-nic none` with no normal-product `hostfwd`. The public CLI/SDK/Node API shape is unchanged, and macOS vsock forwarding remains on the existing path for valid nonzero mappings.
+- Tests run: `cargo fmt --all -- --check`; `cargo check --workspace`; `cargo test --workspace`; `cargo check -p lsb-platform -p lsb-vm --tests --target x86_64-pc-windows-msvc`; `cargo check --workspace --target x86_64-pc-windows-msvc` (blocked on this macOS host by external MSVC C/assembler tooling: `ring` missing Windows/MSVC `assert.h`, `blake3` missing `ml64.exe`). Final `./scripts/win-gh-test smoke` is pending on the self-hosted Windows runner.
+- Debug artifacts: pending final smoke result. Local unit/golden coverage validates no `hostfwd`, no `-netdev`, loopback bind helper behavior, invalid/duplicate port validation, protocol session payload encoding, and the ignored WHPX port-forward smoke hook.
+- New decisions: None. The implementation follows the RFC/M11 direction to use a LocalSandbox guest channel rather than QMP, QEMU user networking, or QEMU `hostfwd`.
+- New risks: Windows M11 serializes active forwarding sessions over the dedicated forwarding channel until a future mux/session model exists. This preserves the no-network-by-default security model but does not provide concurrent forwarding-session multiplexing yet.
+- Next milestone: M12 network policy/proxy integration remains separate; do not treat M11 as general Windows networking support.

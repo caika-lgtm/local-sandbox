@@ -24,7 +24,7 @@ Use this guide to keep errors actionable and repeatable.
 | Control pipe unavailable | named pipe race, bad QEMU chardev, guest driver missing, permissions | pipe path, QEMU argv, guest logs | test host pipe open before/after boot; fake transport tests |
 | Exec hangs | protocol framing bug, guest process wait bug, stdout/stderr backpressure, timeout missing | protocol trace with redaction, guest logs | small command, large stdout command, timeout test |
 | Copy-in fails | Windows path normalization, symlink/junction policy, ACL denial, guest dir missing | source/target paths redacted as needed, error kind | path traversal tests, symlink policy tests |
-| Port forwarding fails | listener conflict, control channel unavailable, guest service not listening, NAT accidentally required | host listener log, forward request/response, guest logs | confirm no NIC required, bind only loopback |
+| Port forwarding fails | host loopback listener conflict, forwarding channel unavailable, guest service not listening/refused connection, invalid port, forwarding channel closed, sandbox stopped | host listener log, forward request/response status, guest logs, redacted QEMU argv | confirm listener binds `127.0.0.1`, argv has `-nic none`, no `hostfwd`, and guest service is listening on guest loopback |
 | Network policy bypass | QEMU user networking accidentally enabled, proxy bypass, DNS/direct IP hole, UDP path open | redacted network config, QEMU argv, proxy logs | no-network default test, direct IP denial test |
 | Checkpoint restore fails | base/writable mismatch, path locking, copy failure, disk image corruption | checkpoint metadata, disk paths, QEMU stderr | restore immediately after create, verify base immutability |
 
@@ -149,3 +149,26 @@ cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
 The rootfs path must be disposable because M05 attaches it as a writable raw
 virtio block device. Long-term qcow2 overlay/checkpoint handling remains a later
 store/checkpoint milestone.
+
+## M11 port-forward diagnostics
+
+Windows M11 port forwarding uses a dedicated private virtio-serial port named
+`org.localsandbox.forward`. It is separate from QMP and from the M08/M09 control
+channel, and normal product forwarding must not add QEMU `hostfwd`, QEMU user
+networking, TAP/bridged networking, or a guest NIC. Redacted argv diagnostics
+should show `-nic none` and a `virtserialport` for the forwarding channel.
+
+Actionable failure checks:
+
+- Bind failure: confirm no process already owns `127.0.0.1:<host_port>` and
+  that the requested host port is nonzero.
+- Guest unavailable or sandbox stopped: check `boot.status.json`, serial tail,
+  and whether `Sandbox.start()` reached guest ready before forwarding started.
+- Guest refused connection: verify the service is listening inside the guest on
+  `127.0.0.1:<guest_port>`; M11 does not expose guest-wide networking.
+- Forwarding channel closed: inspect guest logs for `lsb-guest` forwarding
+  errors and QEMU lifecycle artifacts for process exit.
+- Duplicate bind: reject duplicate host ports before opening listeners.
+
+Do not log forwarded payload bytes. Logs may include host/guest port numbers,
+connection lifecycle events, frame/status names, and high-level errors.
