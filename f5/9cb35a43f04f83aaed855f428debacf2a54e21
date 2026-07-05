@@ -1,0 +1,23 @@
+bindings/nodejs/scripts/windows-preflight-smoke.mjs
+  s_1eedf061012699::t_6ead718443f264 62-64
+  s_1eedf061012699::t_ab9b0fb93d11f7 1-61,65-138
+scripts/windows-smoke.ps1
+  s_1eedf061012699::t_722f90e079a05b 7-43,54-60,72,88
+  s_1eedf061012699::t_9432d999bdbc6c 44-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f59cb35a43f04f83aaed855f428debacf2a54e21",
+  "prompts": {},
+  "sessions": {
+    "s_1eedf061012699": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3242-032d-7483-ad32-09a3066dd5e1",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
