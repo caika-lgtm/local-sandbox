@@ -52,6 +52,8 @@ jobs:
           cargo --version
           rustup show
           cmake --version
+      - name: Validate Windows diagnostic collector
+        run: .\scripts\collect-windows-diagnostics.ps1 -StageRoot "$env:RUNNER_TEMP\windows-diagnostics-probe" -AssetWorkRoot "$env:RUNNER_TEMP\missing-lsb-assets" -SkipCargoLogs
       - name: Cargo check Windows target
         run: cargo check --workspace --locked --target x86_64-pc-windows-msvc
       - name: QEMU argv golden tests
@@ -60,12 +62,13 @@ jobs:
         run: cargo test -p lsb-platform --locked windows_x86_64::qemu::preflight
       - name: Cargo unit tests
         run: cargo test --workspace --locked
-      - name: Upload Windows hosted logs
+      - name: Stage Windows hosted diagnostics
+        if: failure()
+        run: .\scripts\collect-windows-diagnostics.ps1 -AssetWorkRoot "$env:RUNNER_TEMP\missing-lsb-assets"
+      - name: Upload Windows hosted diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: windows-hosted-rust-diagnostics
-          path: |
-            target/**/*.log
-            crates/**/target/**/*.log
+          path: target/windows-lsb-diagnostics/**
           if-no-files-found: ignore
