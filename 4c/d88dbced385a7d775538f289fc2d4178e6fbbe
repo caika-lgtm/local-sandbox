@@ -1,0 +1,29 @@
+bindings/nodejs/README.md
+  s_1eedf061012699::t_52758889658ebc 42-46,156,190,192-194,221-223,237-238,276-279
+bindings/nodejs/scripts/patch-generated-loader.mjs
+  s_1eedf061012699::t_980f576381e9c9 30-35
+  s_1eedf061012699::t_8d3f5e23782cd4 18-23,25-29,47-56
+docs/windows-port/agent-workspace/state.md
+  s_1eedf061012699::t_857c3af49ea1df 53,99,142
+bindings/nodejs/test/package-metadata.spec.ts
+  s_1eedf061012699::t_980f576381e9c9 116-117
+  s_1eedf061012699::t_9a7004b7d782b2 104-115,118
+docs/windows-port/agent-workspace/milestones/14-node-packaging.md
+  s_1eedf061012699::t_857c3af49ea1df 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4cd88dbced385a7d775538f289fc2d4178e6fbbe",
+  "prompts": {},
+  "sessions": {
+    "s_1eedf061012699": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3242-032d-7483-ad32-09a3066dd5e1",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
