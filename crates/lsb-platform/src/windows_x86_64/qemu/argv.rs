@@ -427,10 +427,7 @@ fn push_proxy_stream_network(
     push_pair(
         command,
         "-device",
-        format!(
-            "virtio-net-pci,netdev={PROXY_NETDEV_ID},mac={}",
-            proxy.mac
-        ),
+        format!("virtio-net-pci,netdev={PROXY_NETDEV_ID},mac={}", proxy.mac),
     );
     Ok(())
 }
@@ -475,8 +472,8 @@ fn render_diagnostic_arg(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::windows_x86_64::qemu::config::{
-        QemuControlChannelConfig, QemuNetworkConfig, QemuProxyStreamNetworkConfig,
-        QemuQmpEndpoint, QemuRootMode,
+        QemuControlChannelConfig, QemuNetworkConfig, QemuProxyStreamNetworkConfig, QemuQmpEndpoint,
+        QemuRootMode,
     };
 
     fn base_config() -> QemuBootConfig {

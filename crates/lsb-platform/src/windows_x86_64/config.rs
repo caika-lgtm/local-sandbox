@@ -26,10 +26,11 @@ impl WindowsVmConfig {
             console: config.console,
             verbose: config.verbose,
             network_requested: config.network_fd.is_some() || config.network_attachment.is_some(),
-            network_attachment: config
-                .network_attachment
-                .clone()
-                .or_else(|| config.network_fd.map(PlatformNetworkAttachment::file_descriptor)),
+            network_attachment: config.network_attachment.clone().or_else(|| {
+                config
+                    .network_fd
+                    .map(PlatformNetworkAttachment::file_descriptor)
+            }),
             nbd_requested: config.nbd_uri.is_some(),
             shared_dir_count: config.shared_dirs.len(),
         }

@@ -83,8 +83,7 @@ mod tests {
 
     #[test]
     fn qemu_stream_attachment_translates_to_proxy_network() {
-        let attachment =
-            PlatformNetworkAttachment::qemu_stream(Ipv4Addr::LOCALHOST, 49152);
+        let attachment = PlatformNetworkAttachment::qemu_stream(Ipv4Addr::LOCALHOST, 49152);
 
         let network = qemu_network_config(Some(&attachment)).expect("proxy stream config");
 

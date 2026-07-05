@@ -774,3 +774,193 @@ fn exec_command(
         exit_code,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "requires Windows 11 x86_64 with WHPX, QEMU, outbound network, and disposable LocalSandbox assets"]
+    fn windows_qemu_network_policy_proxy_smoke() {
+        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+        {
+            eprintln!("skipping Windows QEMU network policy/proxy smoke on non-Windows host");
+        }
+
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            use std::collections::HashMap;
+            use std::path::{Path, PathBuf};
+
+            use lsb_proxy::config::SecretConfig;
+
+            use crate::types::SandboxConfig;
+
+            let _storage_guard = EnvVarGuard::set("LSB_STORAGE", "direct");
+            let data_dir = prepare_smoke_data_dir();
+            let secret_value = "m12-real-secret-never-in-guest".to_string();
+            let mut secrets = HashMap::new();
+            secrets.insert(
+                "M12_SECRET".to_string(),
+                SecretConfig {
+                    value: secret_value.clone(),
+                    hosts: vec!["example.com".to_string()],
+                },
+            );
+
+            let config = SandboxConfig {
+                data_dir: Some(data_dir.display().to_string()),
+                allow_net: true,
+                allowed_hosts: vec!["example.com".to_string()],
+                secrets,
+                instance_id: Some(format!("m12-network-policy-{}", std::process::id())),
+                ..Default::default()
+            };
+
+            let (sandbox, instance_dir, _checkpoints, proxy_handle, _fwd, _nbd) =
+                super::boot_vm(config).expect("Windows allow-net sandbox should boot");
+
+            let result = (|| -> anyhow::Result<()> {
+                let proxy_handle = proxy_handle
+                    .as_ref()
+                    .expect("allow-net should keep a proxy handle alive");
+                let placeholder = proxy_handle
+                    .placeholders
+                    .get("M12_SECRET")
+                    .expect("secret placeholder should be generated");
+                assert_ne!(placeholder, &secret_value);
+                assert!(
+                    placeholder.starts_with("lsb_tok_"),
+                    "placeholder should be a guest token, got {placeholder}"
+                );
+
+                sandbox.write_file(
+                    "/usr/local/share/ca-certificates/lsb-proxy.crt",
+                    &proxy_handle.ca_cert_pem,
+                )?;
+                sandbox.exec(
+                    &["update-ca-certificates", "--fresh"],
+                    &mut std::io::sink(),
+                    &mut std::io::sink(),
+                )?;
+
+                let mut env = HashMap::new();
+                env.insert("M12_SECRET".to_string(), placeholder.clone());
+                let allowed = exec_with_env(
+                    &sandbox,
+                    &[
+                        "/usr/bin/curl",
+                        "-fsS",
+                        "--max-time",
+                        "15",
+                        "http://example.com/",
+                    ],
+                    &env,
+                )?;
+                assert_eq!(allowed.exit_code, 0, "allowed host should succeed");
+
+                let secret_env = exec_with_env(
+                    &sandbox,
+                    &[
+                        "/bin/sh",
+                        "-c",
+                        "test \"$M12_SECRET\" != 'm12-real-secret-never-in-guest' && case \"$M12_SECRET\" in lsb_tok_*) exit 0;; *) exit 2;; esac",
+                    ],
+                    &env,
+                )?;
+                assert_eq!(
+                    secret_env.exit_code, 0,
+                    "guest env should contain only the placeholder token"
+                );
+
+                let blocked = exec_with_env(
+                    &sandbox,
+                    &[
+                        "/usr/bin/curl",
+                        "-fsS",
+                        "--max-time",
+                        "8",
+                        "http://iana.org/",
+                    ],
+                    &env,
+                )?;
+                assert_ne!(blocked.exit_code, 0, "blocked domain should fail");
+
+                let direct_ip = exec_with_env(
+                    &sandbox,
+                    &[
+                        "/usr/bin/curl",
+                        "-fsS",
+                        "--max-time",
+                        "8",
+                        "http://93.184.216.34/",
+                    ],
+                    &env,
+                )?;
+                assert_ne!(direct_ip.exit_code, 0, "direct IP egress should fail");
+
+                let argv_path = Path::new(&instance_dir)
+                    .join("diagnostics")
+                    .join("qemu.argv.redacted.txt");
+                let argv = std::fs::read_to_string(&argv_path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", argv_path.display()));
+                assert!(argv.contains("-netdev"));
+                assert!(argv.contains("stream,id=lsbproxy0"));
+                assert!(argv.contains("virtio-net-pci,netdev=lsbproxy0"));
+                assert!(!argv.contains("-netdev user"));
+                assert!(!argv.contains("hostfwd"));
+                assert!(!argv.contains(&secret_value));
+                assert!(!argv.contains(placeholder));
+
+                Ok(())
+            })();
+
+            let stop_result = sandbox.stop();
+            let _ = std::fs::remove_dir_all(&data_dir);
+            result.expect("Windows network policy/proxy smoke should pass");
+            stop_result.expect("Windows network smoke QEMU should stop cleanly");
+
+            struct EnvVarGuard {
+                name: &'static str,
+                old_value: Option<std::ffi::OsString>,
+            }
+
+            impl EnvVarGuard {
+                fn set(name: &'static str, value: &str) -> Self {
+                    let old_value = std::env::var_os(name);
+                    std::env::set_var(name, value);
+                    Self { name, old_value }
+                }
+            }
+
+            impl Drop for EnvVarGuard {
+                fn drop(&mut self) {
+                    if let Some(value) = self.old_value.take() {
+                        std::env::set_var(self.name, value);
+                    } else {
+                        std::env::remove_var(self.name);
+                    }
+                }
+            }
+
+            fn prepare_smoke_data_dir() -> PathBuf {
+                let kernel = required_env_path("LSB_WINDOWS_BOOT_KERNEL");
+                let initrd = required_env_path("LSB_WINDOWS_BOOT_INITRD");
+                let rootfs = required_env_path("LSB_WINDOWS_BOOT_ROOTFS");
+                let root = std::env::temp_dir()
+                    .join(format!("lsb-sdk-m12-network-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&root);
+                std::fs::create_dir_all(root.join("instances")).expect("create instances dir");
+                std::fs::create_dir_all(root.join("checkpoints")).expect("create checkpoints dir");
+                std::fs::copy(kernel, root.join("Image")).expect("copy kernel asset");
+                std::fs::copy(initrd, root.join("initramfs.cpio.gz")).expect("copy initrd asset");
+                std::fs::copy(rootfs, root.join("rootfs.ext4")).expect("copy rootfs asset");
+                root
+            }
+
+            fn required_env_path(name: &str) -> PathBuf {
+                std::env::var_os(name)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| panic!("{name} must point to a disposable boot asset path"))
+            }
+        }
+    }
+}
