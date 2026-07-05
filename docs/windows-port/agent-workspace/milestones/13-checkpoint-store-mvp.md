@@ -1,6 +1,6 @@
 # M13: Checkpoint and Store MVP
 
-Status: Review
+Status: Done
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 
@@ -42,7 +42,7 @@ The specific tests should match the implementation, but this milestone must incl
 ## Acceptance criteria
 
 - [x] Create/list/delete checkpoint tests.
-- [x] Restore smoke test after exec/file mutation is implemented as `windows_qemu_checkpoint_store_smoke`; real self-hosted WHPX execution is pending.
+- [x] Restore smoke test after exec/file mutation passed as `windows_qemu_checkpoint_store_smoke` on self-hosted Windows 11 WHPX.
 - [x] Base image remains unchanged in the Windows MVP design and smoke assertion.
 - [x] Checkpoint errors mention Windows MVP limitations clearly.
 
@@ -69,8 +69,8 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 
 - Branch/PR: `codex/windows-m13-checkpoint-store-mvp`
 - Summary: Implemented Windows checkpoint/store MVP with immutable base images, private per-instance qcow2 writable overlays, flattened qcow2 checkpoint artifacts plus versioned JSON metadata, explicit unsupported errors for CAS `.idx` restore on Windows, CLI/SDK checkpoint wiring, and Windows QEMU qcow2 disk-format selection. Existing macOS NBD/CAS behavior is unchanged.
-- Tests run: `cargo fmt --all -- --check`; `git diff --check`; `cargo check --workspace`; `cargo test --workspace`; `cargo test -p lsb-store windows_checkpoint -- --nocapture`; `cargo test -p lsb-platform windows_x86_64::backend -- --nocapture`; `cargo test -p lsb-sdk windows_qemu_checkpoint_store_smoke -- --ignored --nocapture`; `cargo check -p lsb-platform -p lsb-vm --tests --target x86_64-pc-windows-msvc`. `cargo check --workspace --target x86_64-pc-windows-msvc` remains blocked on this macOS host by external Windows/MSVC C and assembler tooling.
-- Debug artifacts: None from local tests. Real WHPX smoke artifacts pending self-hosted runner execution.
+- Tests run: `cargo fmt --all -- --check`; `git diff --check`; `cargo check --workspace`; `cargo test --workspace`; `cargo test -p lsb-store windows_checkpoint -- --nocapture`; `cargo test -p lsb-platform windows_x86_64::backend -- --nocapture`; `cargo test -p lsb-sdk windows_qemu_checkpoint_store_smoke -- --ignored --nocapture`; `cargo check -p lsb-platform -p lsb-vm --tests --target x86_64-pc-windows-msvc`; self-hosted Windows `./scripts/win-gh-test check` run `28739318686`; self-hosted Windows `./scripts/win-gh-test unit` run `28739439580`; self-hosted Windows `./scripts/win-gh-test smoke` run `28739351408`. `cargo check --workspace --target x86_64-pc-windows-msvc` remains blocked on this macOS host by external Windows/MSVC C and assembler tooling, but passed on the self-hosted Windows/MSVC runner.
+- Debug artifacts: Self-hosted smoke run `28739351408` uploaded `windows-lsb-diagnostics` artifact ID `8091364138`, including staged artifacts under `lsb-assets-work/28739351408-1`.
 - New decisions: D022 records flattened qcow2 checkpoint artifacts for M13.
 - New risks: No new risk; R006 moved to mitigating for the MVP while CAS/NBD remains future work.
-- Next milestone: Run the M13 self-hosted WHPX checkpoint smoke, then proceed to M14 Node packaging if the smoke passes.
+- Next milestone: Proceed to M14 Node packaging.
