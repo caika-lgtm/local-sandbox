@@ -2,6 +2,7 @@ mod backend;
 mod base;
 pub mod cas;
 mod nbd;
+mod windows_checkpoint;
 
 pub use backend::FlatFileBackend;
 pub use base::{
@@ -10,6 +11,13 @@ pub use base::{
 };
 pub use cas::{CasBackend, ChunkIndex, ChunkStore, LocalChunkStore};
 pub use nbd::NbdBackend;
+pub use windows_checkpoint::{
+    QemuImg, QemuImgInvocation, WindowsCheckpointEntry, WindowsCheckpointError,
+    WindowsCheckpointLayout, WindowsCheckpointMetadata, WindowsCheckpointPaths,
+    WindowsCheckpointSource, WindowsCheckpointSourceKind, WindowsCheckpointSourceMetadata,
+    WindowsCheckpointSourceMetadataKind, WindowsCheckpointStore, WindowsDiskImageFormat,
+    WINDOWS_CHECKPOINT_SCHEMA_VERSION,
+};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
@@ -163,7 +171,7 @@ pub fn start_cas_nbd_server(
     _disk_size: u64,
 ) -> Result<NbdHandle> {
     Err(anyhow::anyhow!(
-        "Windows support is in progress: NBD/CAS storage transport is not implemented yet (M13 checkpoint/store MVP); M01 only provides compile stubs"
+        "Windows support is in progress: NBD/CAS storage transport is not implemented yet; M13 uses qcow2/raw checkpoint disk artifacts and does not port Unix-socket NBD/CAS"
     ))
 }
 
