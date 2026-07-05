@@ -1,0 +1,19 @@
+.github/workflows/ci.yml
+  s_686182ffe192bd::t_be4d26f034e83a 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3b8781cc513e517f1c7278a78e6f3d649f21133a",
+  "prompts": {},
+  "sessions": {
+    "s_686182ffe192bd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3299-8bfe-78d0-8d81-a918039c0f92",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
