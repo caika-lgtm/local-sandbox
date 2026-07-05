@@ -72,5 +72,5 @@ Complete the checklist in `../security-checklist.md`. Record any new risk in `..
 - Tests run: `cargo fmt --all -- --check`; `cargo check --workspace`; `cargo test -p lsb-platform windows_x86_64::fs -- --nocapture`; `cargo test -p lsb-vm -- --nocapture`; `cargo test -p lsb-guest -- --nocapture`; targeted Windows test compiles for `lsb-platform`/`lsb-vm`; `cargo test --workspace`; `./scripts/win-gh-test unit` run `28714105683`; `./scripts/win-gh-test smoke` run `28714141992`.
 - Debug artifacts: Windows smoke run `28714141992`, job `85153326347`, uploaded `windows-lsb-diagnostics` artifact ID `8084000670`.
 - New decisions: None. The implementation follows the RFC and existing decisions for copy/import mount semantics and explicit export.
-- New risks: None added. Remaining limitations are intentional MVP boundaries: no VirtioFS/9p/vfat, no live sharing, no direct writable host mounts, no file watching, conservative symlink/reparse/special-file behavior.
+- New risks: None added. Remaining limitations are intentional MVP boundaries: no VirtioFS/9p/vfat, no live sharing, no direct writable host mounts, no file watching, conservative symlink/reparse/hardlink/special-file behavior. Mount imports are re-planned immediately before guest import so post-build source tree changes are revalidated.
 - Next milestone: M11 Port forwarding.

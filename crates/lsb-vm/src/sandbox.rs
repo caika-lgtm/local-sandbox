@@ -30,7 +30,8 @@ use lsb_platform::windows_x86_64::fs::{
 };
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use lsb_platform::windows_x86_64::fs::{
-    plan_windows_mounts, WindowsMountImport, WindowsMountMode, WindowsMountSpec,
+    plan_windows_mounts, replan_windows_mount_import, WindowsMountImport, WindowsMountMode,
+    WindowsMountSpec,
 };
 use lsb_platform::PlatformControlStream;
 use lsb_platform::{self, PlatformSharedDir, PlatformVm, PlatformVmConfig, VmState};
@@ -353,10 +354,11 @@ impl Sandbox {
         self.vm.state_channel()
     }
 
-    /// Send pending mount requests over an established vsock connection.
-    /// Drains the mount list so subsequent calls are no-ops.
+    /// Send pending mount requests over an established guest control connection.
+    /// Clears the mount list only after all requests succeed so failed startup
+    /// attempts cannot silently drop configured mounts.
     fn send_mount_requests(&self, writer: &mut impl Write, reader: &mut impl Read) -> Result<()> {
-        let mounts = std::mem::take(&mut *self.mounts.lock().unwrap());
+        let mounts = self.mounts.lock().unwrap().clone();
         for req in &mounts {
             frame::send_json(writer, frame::MOUNT_REQ, &req).context("sending mount request")?;
             let (msg_type, payload) =
@@ -389,6 +391,7 @@ impl Sandbox {
                 );
             }
         }
+        self.mounts.lock().unwrap().clear();
         Ok(())
     }
 
@@ -1316,30 +1319,42 @@ impl Sandbox {
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     fn initialize_windows_mounts(&self) -> Result<()> {
-        let imports = std::mem::take(
-            &mut *self
-                .windows_mounts
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Windows mount import lock poisoned"))?,
-        );
+        let imports = self
+            .windows_mounts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows mount import lock poisoned"))?
+            .clone();
         if imports.is_empty() {
             return Ok(());
         }
 
         self.ensure_file_range_io("Windows mount import")?;
         for import in &imports {
-            self.copy_from_host_plan(&import.copy_plan)
+            let refreshed = replan_windows_mount_import(import).with_context(|| {
+                format!(
+                    "revalidating Windows mount '{}' source before import",
+                    import.tag
+                )
+            })?;
+            self.copy_from_host_plan(&refreshed.copy_plan)
                 .with_context(|| {
                     format!(
                         "copying Windows mount '{}' into guest staging path '{}'",
-                        import.tag, import.guest_source
+                        refreshed.tag, refreshed.guest_source
                     )
                 })?;
         }
 
-        self.with_guest_control_session("mount init", |writer, reader| {
+        let result = self.with_guest_control_session("mount init", |writer, reader| {
             self.send_mount_requests(writer, reader)
-        })
+        });
+        if result.is_ok() {
+            self.windows_mounts
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Windows mount import lock poisoned"))?
+                .clear();
+        }
+        result
     }
 }
 
@@ -1642,6 +1657,42 @@ mod tests {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     use std::path::PathBuf;
 
+    struct TestVm;
+
+    impl PlatformVm for TestVm {
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn state_channel(&self) -> Receiver<VmState> {
+            let (_tx, rx) = crossbeam_channel::unbounded();
+            rx
+        }
+
+        fn connect_control(&self) -> Result<PlatformControlStream> {
+            bail!("test VM does not provide a control stream")
+        }
+
+        fn connect_to_vsock_port(&self, _port: u32) -> Result<TcpStream> {
+            bail!("test VM does not provide vsock")
+        }
+    }
+
+    fn sandbox_with_mount_requests(mount_requests: Vec<MountRequest>) -> Sandbox {
+        Sandbox {
+            vm: Arc::new(TestVm),
+            mounts: Mutex::new(mount_requests),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_mounts: Mutex::new(Vec::new()),
+            #[cfg(not(target_os = "macos"))]
+            control_session: Mutex::new(()),
+        }
+    }
+
     #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
     #[test]
     fn overlay_mount_generates_readonly_shared_dir_and_overlay_request() {
@@ -1760,6 +1811,33 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("direct host mounts"));
         assert!(message.contains("Windows MVP"));
+    }
+
+    #[test]
+    fn send_mount_requests_retains_pending_mounts_on_guest_error() {
+        let request = MountRequest::Overlay {
+            source: "mount0".into(),
+            target: "/workspace".into(),
+        };
+        let sandbox = sandbox_with_mount_requests(vec![request.clone()]);
+        let mut writer = Vec::new();
+        let mut reader_payload = Vec::new();
+        frame::write_frame(&mut reader_payload, frame::ERROR, b"mount failed")
+            .expect("error frame should encode");
+        let mut reader = Cursor::new(reader_payload);
+
+        let err = sandbox
+            .send_mount_requests(&mut writer, &mut reader)
+            .expect_err("guest mount error should fail");
+
+        assert!(err.to_string().contains("mount failed"));
+        let retained = sandbox.mounts.lock().unwrap();
+        assert_eq!(retained.len(), 1);
+        assert!(matches!(
+            &retained[0],
+            MountRequest::Overlay { source, target }
+                if source == "mount0" && target == "/workspace"
+        ));
     }
 
     #[test]

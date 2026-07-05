@@ -8,6 +8,7 @@ pub use copy::{
     SymlinkPolicy, WindowsPathKind,
 };
 pub use mount_plan::{
-    plan_windows_mounts, windows_mount_guest_source, WindowsMountImport, WindowsMountMode,
-    WindowsMountPlan, WindowsMountPlanError, WindowsMountSpec, WINDOWS_MOUNT_STAGING_ROOT,
+    plan_windows_mounts, replan_windows_mount_import, windows_mount_guest_source,
+    WindowsMountImport, WindowsMountMode, WindowsMountPlan, WindowsMountPlanError,
+    WindowsMountSpec, WINDOWS_MOUNT_STAGING_ROOT,
 };

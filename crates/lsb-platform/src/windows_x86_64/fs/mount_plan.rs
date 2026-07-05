@@ -170,6 +170,26 @@ pub fn plan_windows_mounts(
     })
 }
 
+pub fn replan_windows_mount_import(
+    import: &WindowsMountImport,
+) -> Result<WindowsMountImport, WindowsMountPlanError> {
+    let copy_plan = plan_copy_in(&import.host_path, &import.guest_source)?;
+    if !copy_plan_root_is_directory(&copy_plan) {
+        return Err(WindowsMountPlanError::SourceNotDirectory {
+            tag: import.tag.clone(),
+            path: import.host_path.display().to_string(),
+        });
+    }
+
+    Ok(WindowsMountImport {
+        tag: import.tag.clone(),
+        host_path: copy_plan.source_root.clone(),
+        guest_source: import.guest_source.clone(),
+        guest_target: import.guest_target.clone(),
+        copy_plan,
+    })
+}
+
 pub fn windows_mount_guest_source(tag: &str) -> String {
     join_guest_child(&join_guest_child(WINDOWS_MOUNT_STAGING_ROOT, tag), "source")
 }
@@ -317,6 +337,50 @@ mod tests {
         assert!(matches!(err, WindowsMountPlanError::DuplicateTarget { .. }));
 
         let _ = fs::remove_dir_all(source.parent().unwrap());
+    }
+
+    #[test]
+    fn replan_mount_import_rejects_entry_replaced_with_symlink_after_initial_plan() {
+        let root = temp_dir("replan-symlink");
+        let source = root.join("src");
+        fs::create_dir_all(&source).expect("fixture source dir");
+        write_fixture(&source.join("input.txt"), b"safe");
+
+        let plan =
+            plan_windows_mounts(&[WindowsMountSpec::overlay("mount0", &source, "/workspace")])
+                .expect("initial mount plan should build");
+        let import = &plan.imports[0];
+
+        fs::remove_file(source.join("input.txt")).expect("remove planned file");
+        write_fixture(&root.join("target.txt"), b"target");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("target.txt"), source.join("input.txt"))
+            .expect("symlink fixture");
+        #[cfg(windows)]
+        {
+            match std::os::windows::fs::symlink_file(
+                root.join("target.txt"),
+                source.join("input.txt"),
+            ) {
+                Ok(()) => {}
+                Err(error) if error.raw_os_error() == Some(1314) => {
+                    eprintln!(
+                        "skipping Windows symlink replacement fixture because the runner lacks symlink privilege: {error}"
+                    );
+                    let _ = fs::remove_dir_all(root);
+                    return;
+                }
+                Err(error) => panic!("symlink fixture: {error}"),
+            }
+        }
+
+        let err = replan_windows_mount_import(import)
+            .expect_err("replan should reject replaced symlink entry");
+
+        assert!(matches!(err, WindowsMountPlanError::InvalidPath(_)));
+        assert!(err.to_string().contains("symlinks"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn host_fixture_dir(label: &str) -> PathBuf {

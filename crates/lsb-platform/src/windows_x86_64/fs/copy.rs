@@ -162,6 +162,7 @@ pub fn plan_copy_in(source: &Path, guest_root: &str) -> Result<CopyInPlan, CopyP
     let mut entries = Vec::new();
 
     if metadata.is_file() {
+        reject_hardlinked_file(source, &metadata, CopyPathOperation::CopyInSource)?;
         entries.push(CopyInEntry {
             host_path: source_root.clone(),
             guest_path: guest_root.clone(),
@@ -471,6 +472,7 @@ fn plan_copy_in_dir(
             });
             plan_copy_in_dir(&child_path, &child_guest_path, entries)?;
         } else if metadata.is_file() {
+            reject_hardlinked_file(&child_path, &metadata, CopyPathOperation::CopyInSource)?;
             entries.push(CopyInEntry {
                 host_path: child_path.clone(),
                 guest_path: child_guest_path,
@@ -523,6 +525,81 @@ fn reject_reparse_point(
         ));
     }
     Ok(metadata)
+}
+
+fn reject_hardlinked_file(
+    path: &Path,
+    metadata: &fs::Metadata,
+    operation: CopyPathOperation,
+) -> Result<(), CopyPathError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        if metadata.is_file() {
+            let path_text = path.display().to_string();
+            let mut wide_path = path.as_os_str().encode_wide().collect::<Vec<_>>();
+            wide_path.push(0);
+
+            let handle = unsafe {
+                CreateFileW(
+                    wide_path.as_ptr(),
+                    FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    std::ptr::null(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(CopyPathError::new(
+                    operation,
+                    path_text,
+                    format!(
+                        "failed to inspect Windows hardlink metadata: {}",
+                        std::io::Error::last_os_error()
+                    ),
+                ));
+            }
+
+            let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+            let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
+            let _ = unsafe { CloseHandle(handle) };
+
+            if ok == 0 {
+                return Err(CopyPathError::new(
+                    operation,
+                    path_text,
+                    format!(
+                        "failed to inspect Windows hardlink metadata: {}",
+                        std::io::Error::last_os_error()
+                    ),
+                ));
+            }
+
+            if info.nNumberOfLinks > 1 {
+                return Err(CopyPathError::new(
+                    operation,
+                    path_text,
+                    "hardlinked files are not copied in the Windows MVP",
+                ));
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (path, metadata, operation);
+    }
+
+    Ok(())
 }
 
 fn is_symlink_or_reparse_point(metadata: &fs::Metadata) -> bool {
@@ -872,6 +949,25 @@ mod tests {
         let err = plan_copy_in(&source, "/workspace/input").expect_err("symlink should fail");
 
         assert!(err.reason().contains("symlinks"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn copy_in_plan_rejects_hardlinked_files_on_windows() {
+        let root = temp_dir("hardlink");
+        let source = root.join("src");
+        fs::create_dir_all(&source).expect("source dir");
+        let input = source.join("input.txt");
+        write_fixture(&input, b"linked content");
+        fs::hard_link(&input, root.join("outside-link.txt")).expect("hardlink fixture");
+
+        let err = plan_copy_in(&source, "/workspace/input")
+            .expect_err("hardlinked files should fail closed");
+
+        assert_eq!(err.operation(), CopyPathOperation::CopyInSource);
+        assert!(err.reason().contains("hardlinked files"));
 
         let _ = fs::remove_dir_all(root);
     }
