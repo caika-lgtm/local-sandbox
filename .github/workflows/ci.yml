@@ -6,9 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  rust-format:
+    name: Rust format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all -- --check
+
   rust-check:
-    name: Rust check
+    name: macOS Rust check
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +30,42 @@ jobs:
       - run: cmake --version
       - run: cargo check -p lsb-platform -p lsb-vm -p lsb-sdk -p lsb-cli -p xtask
       - run: cargo check -p lsb-platform -p lsb-vm -p lsb-sdk -p lsb-cli -p xtask --target x86_64-apple-darwin
+
+  windows-hosted-rust:
+    name: Hosted Windows Rust check/unit/golden
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+          rustup show
+          cmake --version
+      - name: Cargo check Windows target
+        run: cargo check --workspace --locked --target x86_64-pc-windows-msvc
+      - name: QEMU argv golden tests
+        run: cargo test -p lsb-platform --locked windows_x86_64::qemu::argv
+      - name: QEMU preflight unit tests
+        run: cargo test -p lsb-platform --locked windows_x86_64::qemu::preflight
+      - name: Cargo unit tests
+        run: cargo test --workspace --locked
+      - name: Upload Windows hosted logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hosted-rust-diagnostics
+          path: |
+            target/**/*.log
+            crates/**/target/**/*.log
+          if-no-files-found: ignore
