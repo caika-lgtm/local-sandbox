@@ -103,6 +103,7 @@ jobs:
       BOOT_ASSET_PLATFORM: windows-x86_64
       BOOT_ASSET_KEY: ${{ needs.windows-boot-cache-probe.outputs.asset_key }}
       BOOT_ASSET_DIR: target/windows-boot-assets/windows-x86_64
+      KERNEL_ASSET_DIR: target/windows-kernel-assets/windows-x86_64
       LSB_DATA_DIR: /tmp/lsb-windows-boot-assets
       LSB_FORCE_DOCKER_ROOTFS: "1"
 
@@ -118,6 +119,14 @@ jobs:
         with:
           path: ${{ env.BOOT_ASSET_DIR }}
           key: ${{ env.BOOT_ASSET_KEY }}
+
+      - name: Restore kernel image cache
+        id: kernel-image-cache
+        if: ${{ steps.boot-assets-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KERNEL_ASSET_DIR }}
+          key: windows-kernel-image-v1-${{ env.BOOT_ASSET_PLATFORM }}-${{ hashFiles('kernel/lsb_x86_64_defconfig', 'xtask/src/kernel.rs', 'xtask/src/context.rs', 'crates/lsb-platform/src/windows_x86_64/mod.rs') }}
 
       - name: Install Rust toolchain
         if: ${{ steps.boot-assets-cache.outputs.cache-hit != 'true' }}
@@ -147,8 +156,15 @@ jobs:
         if: ${{ steps.boot-assets-cache.outputs.cache-hit != 'true' }}
         run: |
           rm -rf "${LSB_DATA_DIR}" "${BOOT_ASSET_DIR}"
-          mkdir -p "${LSB_DATA_DIR}" "${BOOT_ASSET_DIR}"
+          mkdir -p "${LSB_DATA_DIR}" "${BOOT_ASSET_DIR}" "${KERNEL_ASSET_DIR}"
+          if [ "${{ steps.kernel-image-cache.outputs.cache-hit }}" = "true" ]; then
+            test -s "${KERNEL_ASSET_DIR}/Image"
+            cp "${KERNEL_ASSET_DIR}/Image" "${LSB_DATA_DIR}/Image"
+            echo "Restored cached kernel image to ${LSB_DATA_DIR}/Image"
+          fi
           cargo run -p xtask -- prepare-rootfs --platform "${BOOT_ASSET_PLATFORM}"
+          test -s "${LSB_DATA_DIR}/Image"
+          cp "${LSB_DATA_DIR}/Image" "${KERNEL_ASSET_DIR}/Image"
 
       - name: Stage boot assets and manifest
         run: |
