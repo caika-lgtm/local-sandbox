@@ -1,6 +1,6 @@
 # M15: CI and Diagnostics Hardening
 
-Status: Not started
+Status: In progress
 Depends on: See `00-index.md`
 RFC sections: See `traceability.md`
 

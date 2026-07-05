@@ -3,8 +3,8 @@
 Last updated: 2026-07-05
 Owner: TBD
 RFC: `docs/windows-port/rfc-qemu-whpx.md`
-Current milestone: M14 - Node packaging
-Overall status: M14 Windows x86_64 Node packaging is review-ready with self-hosted Windows Node build/import/start smoke validation; packed npm artifact install remains a release-lane/M15 follow-up
+Current milestone: M15 - CI and diagnostics hardening
+Overall status: M15 Windows CI and diagnostics hardening is in progress on the final Windows port gate; M14 source-tree Node build/import/start smoke evidence exists and packed npm artifact install validation remains an M15/release-lane follow-up.
 
 ## How to update this file
 
@@ -12,11 +12,11 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 
 ## Current branch / issue
 
-- Branch: `codex/windows-m14-node-packaging`
+- Branch: `codex/windows-m15-ci-diagnostics`
 - Issue: TBD
 - Agent: Codex
-- Start commit: `f9c13b5`
-- End commit: branch head after the M14 state update
+- Start commit: `4cd88db`
+- End commit: TBD
 
 ## Milestone status table
 
@@ -36,7 +36,7 @@ Update this file at the end of every agent run. Keep it factual. Do not use it f
 | M12 Network policy and proxy integration | Done | Codex | `codex/windows-m12-network-policy-proxy` | Windows allow-net uses LocalSandbox proxy stream attachment; default remains no guest NIC and no QEMU user networking. |
 | M13 Checkpoint/store MVP | Done | Codex | `codex/windows-m13-checkpoint-store-mvp` | Windows MVP uses immutable base plus per-instance qcow2 overlays and flattened qcow2 checkpoint artifacts; self-hosted WHPX smoke passed. |
 | M14 Node packaging | Review | Codex | `codex/windows-m14-node-packaging` | Windows x86_64 package metadata, native target wiring, loader error patching, tests, docs, and self-hosted Node build/import/start smoke are in place; packed npm artifact install remains release-lane/M15 follow-up. |
-| M15 CI and diagnostics hardening | Runs throughout, final gate after M14 | TBD | TBD | Self-hosted Windows 11 WHPX runner. |
+| M15 CI and diagnostics hardening | In progress | Codex | `codex/windows-m15-ci-diagnostics` | Adding hosted Windows compile/unit/golden CI, manual self-hosted WHPX smoke gating, diagnostic collection, and final workspace handoff. |
 
 Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Deferred`.
 
@@ -50,6 +50,7 @@ Status values: `Not started`, `In progress`, `Blocked`, `Review`, `Done`, `Defer
 
 ## Recently completed work
 
+- 2026-07-05: Started M15 on `codex/windows-m15-ci-diagnostics` from `4cd88db`; scope is CI and diagnostics hardening only. The implementation must preserve the existing Windows backend behavior, keep hosted Windows CI compile/unit/golden-only, keep WHPX smoke tests manual and self-hosted, upload redacted diagnostic artifacts on failure, and update runner/validation/diagnostics/risk documentation.
 - 2026-07-05: Addressed M14 Node packaging review comments. The generated-loader patch now reports unsupported Windows non-x64 hosts as `win32-x64-msvc`-only instead of falling through to generic npm optional-dependency guidance, with static AVA coverage for the generated helper. The Node README now documents Windows MVP limitations for direct writable mounts, streaming `spawn()`, interactive shells, and `watch()`, and the combined mount/network example uses an overlay mount that works on Windows.
 - 2026-07-05: Added Windows Node smoke coverage to `scripts/windows-smoke.ps1`. The smoke builds the local `win32-x64-msvc` N-API binding with Yarn/NAPI, verifies an intentional missing `LSB_QEMU` path surfaces the Rust Windows QEMU preflight chain instead of a native-loader error, then starts and stops a minimal Node `Sandbox` using workflow-provisioned boot assets.
 - 2026-07-05: Fixed Node N-API error conversion to preserve `anyhow` error chains. First self-hosted smoke run `28741753249` failed because `Sandbox.start()` surfaced only `Failed to start VM`; commit `74027f9` changed the N-API error message to include backend causes such as `LSB_QEMU` path validation. Rerun `28742090397` passed.
