@@ -1,0 +1,19 @@
+crates/lsb-sdk/src/runtime.rs
+  s_d4ed328c196059::t_6f978584d359f7 847,856-857,859,861,868-869,872,876,885-886,888,890,899-900,902
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f0f9789c12bb473981e0a917f6117d0d363a4713",
+  "prompts": {},
+  "sessions": {
+    "s_d4ed328c196059": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f317b-d5ac-73a2-8e90-54b0b04a45b4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
