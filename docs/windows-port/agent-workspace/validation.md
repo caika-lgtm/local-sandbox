@@ -158,6 +158,12 @@ the exec/copy/mount smokes on a Windows 11 x86_64 WHPX runner:
 cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture
 ```
 
+If the full `./scripts/win-gh-test smoke` lane stalls or is cancelled in an
+earlier smoke such as `windows_qemu_exec_smoke`, do not treat that run as M11
+runtime evidence. Use the direct ignored test above with the same disposable
+asset variables to get a focused port-forward result, then record the run ID and
+diagnostics path in `state.md`.
+
 The M11 smoke starts a simple guest-local TCP service through the existing exec
 path, forwards a host `127.0.0.1:<host_port>` listener to that guest port over
 the LocalSandbox forwarding channel, verifies response bytes from the Windows

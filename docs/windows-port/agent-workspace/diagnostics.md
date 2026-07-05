@@ -169,6 +169,11 @@ Actionable failure checks:
 - Forwarding channel closed: inspect guest logs for `lsb-guest` forwarding
   errors and QEMU lifecycle artifacts for process exit.
 - Duplicate bind: reject duplicate host ports before opening listeners.
+- Smoke suite stalls before port-forward: if `./scripts/win-gh-test smoke`
+  hangs in an earlier ignored smoke, run
+  `cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture`
+  directly with the same disposable boot asset variables before drawing M11
+  conclusions.
 
 Do not log forwarded payload bytes. Logs may include host/guest port numbers,
 connection lifecycle events, frame/status names, and high-level errors.
