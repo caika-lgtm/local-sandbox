@@ -169,6 +169,8 @@ async fn handle_connection(
         let sni = extract_sni(&tls_buf);
         debug!("TLS to {dst}, SNI: {sni:?}");
 
+        enforce_domain_policy(config, sni.as_deref(), "TLS")?;
+
         if let Some(domain) = sni {
             let substitutions = config.secrets_for_domain(&domain, placeholders);
             if !substitutions.is_empty() {
@@ -199,7 +201,23 @@ async fn handle_connection(
         return blind_relay(id, &mut upstream_rd, &mut upstream_wr, data_rx, cmd_tx).await;
     }
 
-    // Non-TLS: blind tunnel
+    if config.has_domain_allowlist() {
+        let first_chunk = data_rx
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("connection closed before data"))?;
+        let host = extract_http_host(&first_chunk);
+        enforce_domain_policy(config, host.as_deref(), "TCP")?;
+
+        debug!("TCP tunnel to {dst}");
+        let upstream = TcpStream::connect(dst).await?;
+        let (mut upstream_rd, mut upstream_wr) = upstream.into_split();
+        upstream_wr.write_all(&first_chunk).await?;
+
+        return blind_relay(id, &mut upstream_rd, &mut upstream_wr, data_rx, cmd_tx).await;
+    }
+
+    // Non-TLS without an explicit allowlist: blind tunnel.
     debug!("TCP tunnel to {dst}");
     let upstream = TcpStream::connect(dst).await?;
     let (mut upstream_rd, mut upstream_wr) = upstream.into_split();
@@ -251,6 +269,26 @@ async fn blind_relay(
 
     let _ = cmd_tx.send(StackCommand::Close { id });
     Ok(())
+}
+
+fn enforce_domain_policy(
+    config: &ProxyConfig,
+    domain: Option<&str>,
+    protocol: &str,
+) -> anyhow::Result<()> {
+    if !config.has_domain_allowlist() {
+        return Ok(());
+    }
+
+    let Some(domain) = domain else {
+        anyhow::bail!("{protocol} connection denied: no policy-visible domain");
+    };
+
+    if config.is_domain_allowed(domain) {
+        Ok(())
+    } else {
+        anyhow::bail!("{protocol} connection denied by network policy for {domain}");
+    }
 }
 
 /// MITM: terminate TLS on both sides, relay with secret substitution.
@@ -426,8 +464,37 @@ pub fn extract_sni(data: &[u8]) -> Option<String> {
     None
 }
 
+fn extract_http_host(data: &[u8]) -> Option<String> {
+    let header_end = data.windows(4).position(|window| window == b"\r\n\r\n")?;
+    let headers = std::str::from_utf8(&data[..header_end]).ok()?;
+    for line in headers.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("host") {
+            let host = value.trim();
+            if host.is_empty() {
+                return None;
+            }
+            return Some(strip_host_port(host).to_string());
+        }
+    }
+    None
+}
+
+fn strip_host_port(host: &str) -> &str {
+    if host.starts_with('[') {
+        return host;
+    }
+    host.rsplit_once(':')
+        .and_then(|(name, port)| port.parse::<u16>().ok().map(|_| name))
+        .unwrap_or(host)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -452,5 +519,89 @@ mod tests {
         );
         assert_eq!(replace_bytes(b"no match", b"xyz", b"abc"), b"no match");
         assert_eq!(replace_bytes(b"", b"x", b"y"), b"");
+    }
+
+    #[test]
+    fn allowlist_policy_allows_visible_allowed_domain() {
+        let config = ProxyConfig {
+            network: crate::config::NetworkConfig {
+                allow: vec!["api.example.test".into()],
+            },
+            ..Default::default()
+        };
+
+        enforce_domain_policy(&config, Some("api.example.test"), "TLS")
+            .expect("allowed domain should pass");
+    }
+
+    #[test]
+    fn allowlist_policy_blocks_direct_ip_or_missing_domain() {
+        let config = ProxyConfig {
+            network: crate::config::NetworkConfig {
+                allow: vec!["api.example.test".into()],
+            },
+            ..Default::default()
+        };
+
+        let err = enforce_domain_policy(&config, None, "TCP")
+            .expect_err("missing domain should be blocked");
+
+        assert!(err.to_string().contains("no policy-visible domain"));
+    }
+
+    #[test]
+    fn allowlist_policy_blocks_unlisted_sni() {
+        let config = ProxyConfig {
+            network: crate::config::NetworkConfig {
+                allow: vec!["api.example.test".into()],
+            },
+            ..Default::default()
+        };
+
+        let err = enforce_domain_policy(&config, Some("blocked.example.test"), "TLS")
+            .expect_err("blocked domain should fail");
+
+        assert!(err.to_string().contains("denied by network policy"));
+        assert!(err.to_string().contains("blocked.example.test"));
+    }
+
+    #[test]
+    fn http_host_is_policy_visible_without_leaking_payloads() {
+        let host = extract_http_host(
+            b"GET / HTTP/1.1\r\nHost: api.example.test:443\r\nUser-Agent: test\r\n\r\nbody",
+        )
+        .expect("host header should parse");
+
+        assert_eq!(host, "api.example.test");
+    }
+
+    #[test]
+    fn secret_substitution_is_reachable_only_after_domain_policy_allows() {
+        let mut config = ProxyConfig {
+            network: crate::config::NetworkConfig {
+                allow: vec!["api.example.test".into()],
+            },
+            ..Default::default()
+        };
+        config.secrets.insert(
+            "API_KEY".into(),
+            crate::config::SecretConfig {
+                value: "real-secret".into(),
+                hosts: vec!["api.example.test".into()],
+            },
+        );
+        let placeholders = HashMap::from([("API_KEY".into(), "lsb_tok_placeholder".into())]);
+
+        enforce_domain_policy(&config, Some("api.example.test"), "TLS")
+            .expect("secret host is allowed");
+        assert_eq!(
+            config.secrets_for_domain("api.example.test", &placeholders),
+            vec![("lsb_tok_placeholder".into(), "real-secret".into())]
+        );
+
+        assert!(enforce_domain_policy(&config, Some("blocked.example.test"), "TLS").is_err());
+        assert!(config
+            .secrets_for_domain("blocked.example.test", &placeholders)
+            .is_empty());
     }
 }

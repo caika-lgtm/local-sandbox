@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::os::unix::io::RawFd;
 
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::socket::tcp::{self, Socket as TcpSocket};
@@ -13,7 +12,7 @@ use smoltcp::wire::{
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::device::VZDevice;
+use crate::device::FrameDevice;
 
 /// Gateway IP inside the virtual network (host-side smoltcp).
 pub const GATEWAY_IP: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
@@ -60,8 +59,11 @@ pub enum StackCommand {
 ///
 /// Runs on a dedicated thread, polling the VZDevice and smoltcp interface.
 /// Communicates with the async proxy engine via channels.
-pub struct NetworkStack {
-    device: VZDevice,
+pub struct NetworkStack<D>
+where
+    D: FrameDevice,
+{
+    device: D,
     iface: Interface,
     sockets: SocketSet<'static>,
     dns_handle: SocketHandle,
@@ -80,14 +82,15 @@ pub struct NetworkStack {
     cmd_rx: mpsc::UnboundedReceiver<StackCommand>,
 }
 
-impl NetworkStack {
+impl<D> NetworkStack<D>
+where
+    D: FrameDevice,
+{
     pub fn new(
-        host_fd: RawFd,
+        mut device: D,
         event_tx: mpsc::UnboundedSender<StackEvent>,
         cmd_rx: mpsc::UnboundedReceiver<StackCommand>,
     ) -> Self {
-        let mut device = VZDevice::new(host_fd);
-
         let config = Config::new(HardwareAddress::Ethernet(GATEWAY_MAC));
         let mut iface = Interface::new(config, &mut device, Self::now());
         iface.update_ip_addrs(|addrs| {
@@ -205,11 +208,11 @@ impl NetworkStack {
         // Count SYNs per destination. Multiple SYNs to the same IP:port
         // need separate listening sockets (one per connection).
         self.syn_scratch.clear();
-        for frame in self.device.pending_frames() {
+        self.device.visit_pending_frames(&mut |frame| {
             if let Some((dst_ip, dst_port)) = Self::parse_syn_dst(frame) {
                 *self.syn_scratch.entry((dst_ip, dst_port)).or_default() += 1;
             }
-        }
+        });
 
         // Drain into a local vec to release &mut self borrow on syn_scratch
         let syn_entries: Vec<_> = self.syn_scratch.drain().collect();

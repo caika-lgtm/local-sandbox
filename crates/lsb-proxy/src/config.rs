@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::net::Ipv4Addr;
 
 /// A host port exposed to the guest via host.lsb.internal.
@@ -22,13 +23,22 @@ pub struct ProxyConfig {
 }
 
 /// A secret that the proxy injects into HTTP requests.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecretConfig {
     /// Literal secret value held on the host.
     pub value: String,
     /// Domain patterns where this secret may be sent (e.g., "api.openai.com").
     /// The proxy only substitutes the placeholder on requests to these hosts.
     pub hosts: Vec<String>,
+}
+
+impl fmt::Debug for SecretConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SecretConfig")
+            .field("value", &"<redacted>")
+            .field("hosts", &self.hosts)
+            .finish()
+    }
 }
 
 /// Network access policy.
@@ -50,6 +60,12 @@ impl ProxyConfig {
             .allow
             .iter()
             .any(|pattern| domain_matches(pattern, domain))
+    }
+
+    /// Whether this proxy config has an explicit allowlist. Empty allowlists
+    /// preserve existing allow-all `--allow-net` behavior.
+    pub fn has_domain_allowlist(&self) -> bool {
+        !self.network.allow.is_empty()
     }
 
     /// Look up whether a connection to the gateway IP on `guest_port` should
@@ -91,12 +107,14 @@ impl ProxyConfig {
 /// "*.example.com" matches "api.example.com" but not "example.com".
 /// "example.com" matches exactly "example.com".
 fn domain_matches(pattern: &str, domain: &str) -> bool {
+    let pattern = pattern.trim_end_matches('.');
+    let domain = domain.trim_end_matches('.');
     if let Some(suffix) = pattern.strip_prefix("*.") {
-        domain.ends_with(suffix)
-            && domain.len() > suffix.len()
+        domain.len() > suffix.len()
+            && domain[domain.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
             && domain.as_bytes()[domain.len() - suffix.len() - 1] == b'.'
     } else {
-        pattern == domain
+        pattern.eq_ignore_ascii_case(domain)
     }
 }
 
@@ -107,6 +125,8 @@ mod tests {
     #[test]
     fn test_domain_matching() {
         assert!(domain_matches("example.com", "example.com"));
+        assert!(domain_matches("Example.COM", "example.com."));
+        assert!(domain_matches("*.Example.COM", "api.EXAMPLE.com."));
         assert!(!domain_matches("example.com", "api.example.com"));
         assert!(domain_matches("*.example.com", "api.example.com"));
         assert!(domain_matches("*.example.com", "deep.api.example.com"));
@@ -134,6 +154,24 @@ mod tests {
         assert!(config
             .secrets_for_domain("api.anthropic.com", &placeholders)
             .is_empty());
+    }
+
+    #[test]
+    fn secret_debug_redacts_literal_value() {
+        let mut config = ProxyConfig::default();
+        config.secrets.insert(
+            "API_KEY".into(),
+            SecretConfig {
+                value: "sk-test-never-log".into(),
+                hosts: vec!["api.openai.com".into()],
+            },
+        );
+
+        let rendered = format!("{config:?}");
+
+        assert!(!rendered.contains("sk-test-never-log"));
+        assert!(rendered.contains("<redacted>"));
+        assert!(rendered.contains("api.openai.com"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ repository = "https://github.com/LocalSandBox/local-sandbox.git"
 [dependencies]
 anyhow = "1"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 smoltcp = { version = "0.12", default-features = false, features = [
     "alloc",
     "medium-ethernet",
@@ -27,4 +27,6 @@ tokio-boring = "4"
 simple-dns = "0.9"
 lru = "0.14"
 tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"

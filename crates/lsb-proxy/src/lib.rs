@@ -1,33 +1,40 @@
 pub mod config;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod device;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod dns;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod proxy;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod stack;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod stream;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod tls;
 
 pub use config::ProxyConfig;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
+#[cfg(windows)]
+use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 
+#[cfg(windows)]
+use device::QemuStreamDevice;
 #[cfg(unix)]
+use device::VZDevice;
+#[cfg(any(unix, windows))]
 use proxy::ProxyEngine;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use stack::NetworkStack;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tls::CertificateAuthority;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::sync::mpsc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tracing::info;
 
 #[cfg(unix)]
@@ -36,11 +43,29 @@ pub type PlatformNetworkFd = RawFd;
 #[cfg(not(unix))]
 pub type PlatformNetworkFd = i32;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmNetworkAttachment {
+    FileDescriptor(PlatformNetworkFd),
+    QemuStream { host: Ipv4Addr, port: u16 },
+}
+
+pub enum ProxyHostAttachment {
+    #[cfg(unix)]
+    FileDescriptor(PlatformNetworkFd),
+    #[cfg(windows)]
+    QemuStreamListener(TcpListener),
+}
+
+pub struct ProxyLink {
+    pub vm: VmNetworkAttachment,
+    pub host: ProxyHostAttachment,
+}
+
 /// Handle to a running proxy. Shuts down on drop.
 pub struct ProxyHandle {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     _stack_thread: std::thread::JoinHandle<()>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     _runtime_thread: std::thread::JoinHandle<()>,
     /// Placeholder tokens generated for secrets. Key = env var name, Value = placeholder.
     pub placeholders: std::collections::HashMap<String, String>,
@@ -60,6 +85,51 @@ fn generate_placeholder() -> String {
         .as_nanos() as u64;
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("lsb_tok_{:016x}{:04x}", ts, seq)
+}
+
+#[cfg(windows)]
+fn generate_placeholder() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("lsb_tok_{:016x}{:04x}", ts, seq)
+}
+
+pub fn create_proxy_link() -> anyhow::Result<ProxyLink> {
+    #[cfg(unix)]
+    {
+        let (vm_fd, host_fd) = create_socketpair()?;
+        return Ok(ProxyLink {
+            vm: VmNetworkAttachment::FileDescriptor(vm_fd),
+            host: ProxyHostAttachment::FileDescriptor(host_fd),
+        });
+    }
+
+    #[cfg(windows)]
+    {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+        return Ok(ProxyLink {
+            vm: VmNetworkAttachment::QemuStream {
+                host: Ipv4Addr::LOCALHOST,
+                port,
+            },
+            host: ProxyHostAttachment::QemuStreamListener(listener),
+        });
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        anyhow::bail!(
+            "proxy networking is unsupported on this host platform; no VM network device was created"
+        );
+    }
 }
 
 /// Create a Unix datagram socketpair for VZFileHandleNetworkDeviceAttachment.
@@ -104,7 +174,7 @@ pub fn create_socketpair() -> anyhow::Result<(PlatformNetworkFd, PlatformNetwork
 #[cfg(not(unix))]
 pub fn create_socketpair() -> anyhow::Result<(PlatformNetworkFd, PlatformNetworkFd)> {
     Err(anyhow::anyhow!(
-        "Windows support is in progress: proxy networking is not implemented yet (M12 network policy and proxy integration); M01 does not create a QEMU network device"
+        "Windows proxy networking requires create_proxy_link/start_link with a QEMU stream attachment; legacy fd socketpair startup is unsupported and no QEMU user networking was enabled"
     ))
 }
 
@@ -114,6 +184,17 @@ pub fn create_socketpair() -> anyhow::Result<(PlatformNetworkFd, PlatformNetwork
 /// - `config`: proxy configuration (secrets, network rules)
 #[cfg(unix)]
 pub fn start(host_fd: PlatformNetworkFd, config: ProxyConfig) -> anyhow::Result<ProxyHandle> {
+    start_link(ProxyHostAttachment::FileDescriptor(host_fd), config)
+}
+
+/// Start the proxy engine from a platform-specific host attachment.
+///
+/// The attachment must be the host side returned by `create_proxy_link`.
+#[cfg(any(unix, windows))]
+pub fn start_link(
+    attachment: ProxyHostAttachment,
+    config: ProxyConfig,
+) -> anyhow::Result<ProxyHandle> {
     // Install rustls crypto provider (process-wide, idempotent)
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
@@ -129,12 +210,7 @@ pub fn start(host_fd: PlatformNetworkFd, config: ProxyConfig) -> anyhow::Result<
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
-    let stack_thread = std::thread::Builder::new()
-        .name("lsb-netstack".into())
-        .spawn(move || {
-            let mut stack = NetworkStack::new(host_fd, event_tx, cmd_rx);
-            stack.run();
-        })?;
+    let stack_thread = spawn_stack_thread(attachment, event_tx, cmd_rx)?;
 
     let proxy_config = config;
     let proxy_placeholders = placeholders.clone();
@@ -164,27 +240,94 @@ pub fn start(host_fd: PlatformNetworkFd, config: ProxyConfig) -> anyhow::Result<
     })
 }
 
-/// Windows proxy startup is intentionally unavailable until the policy-bearing
-/// network backend is designed and implemented.
+#[cfg(unix)]
+fn spawn_stack_thread(
+    attachment: ProxyHostAttachment,
+    event_tx: mpsc::UnboundedSender<stack::StackEvent>,
+    cmd_rx: mpsc::UnboundedReceiver<stack::StackCommand>,
+) -> anyhow::Result<std::thread::JoinHandle<()>> {
+    let ProxyHostAttachment::FileDescriptor(host_fd) = attachment;
+    std::thread::Builder::new()
+        .name("lsb-netstack".into())
+        .spawn(move || {
+            let mut stack = NetworkStack::new(VZDevice::new(host_fd), event_tx, cmd_rx);
+            stack.run();
+        })
+        .map_err(Into::into)
+}
+
+#[cfg(windows)]
+fn spawn_stack_thread(
+    attachment: ProxyHostAttachment,
+    event_tx: mpsc::UnboundedSender<stack::StackEvent>,
+    cmd_rx: mpsc::UnboundedReceiver<stack::StackCommand>,
+) -> anyhow::Result<std::thread::JoinHandle<()>> {
+    let ProxyHostAttachment::QemuStreamListener(listener) = attachment;
+    std::thread::Builder::new()
+        .name("lsb-netstack".into())
+        .spawn(move || loop {
+            match listener.accept() {
+                Ok((stream, addr)) => {
+                    info!("proxy QEMU stream link connected from {addr}");
+                    match QemuStreamDevice::new(stream) {
+                        Ok(device) => {
+                            let mut stack = NetworkStack::new(device, event_tx, cmd_rx);
+                            stack.run();
+                        }
+                        Err(error) => {
+                            tracing::debug!("failed to initialize QEMU stream proxy link: {error}");
+                        }
+                    }
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    tracing::debug!("QEMU stream proxy listener failed: {error}");
+                    break;
+                }
+            }
+        })
+        .map_err(Into::into)
+}
+
+/// Legacy Windows fd proxy startup is intentionally unavailable; use
+/// `create_proxy_link` and `start_link` so the Windows backend receives a
+/// policy-bearing QEMU stream attachment instead of a raw integer fd.
 #[cfg(not(unix))]
 pub fn start(_host_fd: PlatformNetworkFd, _config: ProxyConfig) -> anyhow::Result<ProxyHandle> {
     Err(anyhow::anyhow!(
-        "Windows support is in progress: proxy networking is not implemented yet (M12 network policy and proxy integration); M01 only provides compile stubs"
+        "Windows proxy networking requires create_proxy_link/start_link with a QEMU stream attachment; legacy fd startup is unsupported and no QEMU user networking was enabled"
     ))
 }
 
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, windows))]
 mod non_unix_tests {
     use super::*;
 
     #[test]
-    fn socketpair_stub_reports_windows_proxy_milestone() {
+    fn socketpair_stub_rejects_legacy_fd_path() {
         let message = match create_socketpair() {
             Ok(_) => panic!("socketpair should be unsupported"),
             Err(error) => error.to_string(),
         };
 
-        assert!(message.contains("proxy networking"));
-        assert!(message.contains("M12"));
+        assert!(message.contains("QEMU stream"));
+        assert!(message.contains("legacy fd"));
+    }
+
+    #[test]
+    fn windows_proxy_link_uses_loopback_stream_endpoint() {
+        let link = create_proxy_link().expect("proxy link should bind loopback listener");
+
+        match link.vm {
+            VmNetworkAttachment::QemuStream { host, port } => {
+                assert_eq!(host, Ipv4Addr::LOCALHOST);
+                assert_ne!(port, 0);
+            }
+            VmNetworkAttachment::FileDescriptor(_) => panic!("Windows should not use fd link"),
+        }
     }
 }
