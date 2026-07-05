@@ -1,0 +1,25 @@
+crates/lsb-store/src/windows_checkpoint.rs
+  s_184d5e3b064abb::t_2178dd4c806083 1-51,53-73,77-300,302-308,310-805,819-941,946-989,998-1001,1006-1066,1071-1112,1119-1160
+  s_184d5e3b064abb::t_0bfb9563a85505 806-818
+  s_184d5e3b064abb::t_e38761bf643b92 301,309
+  s_184d5e3b064abb::t_1bac50ce022200 52,74-76,942-945,990-997,1002-1005,1067-1070,1113-1118
+crates/lsb-store/src/lib.rs
+  s_184d5e3b064abb::t_9e3460049f18d7 174
+  s_184d5e3b064abb::t_a23307da6ad7cf 5,14-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8fc0ec2bd99df0781822ddc1417c8c47d4514739",
+  "prompts": {},
+  "sessions": {
+    "s_184d5e3b064abb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f31e8-5f63-77d3-b4c9-7e59b8ebcdda",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
