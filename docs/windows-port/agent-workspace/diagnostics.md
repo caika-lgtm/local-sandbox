@@ -183,3 +183,44 @@ Actionable failure checks:
 
 Do not log forwarded payload bytes. Logs may include host/guest port numbers,
 connection lifecycle events, frame/status names, and high-level errors.
+
+## M12 network policy/proxy diagnostics
+
+Windows M12 networking is policy-mediated through `lsb-proxy`. The default VM
+still has no guest NIC and the redacted QEMU argv must contain `-nic none`.
+Enabling existing allow-net configuration creates a LocalSandbox-owned proxy
+link and attaches the guest NIC only to that link:
+
+```text
+-netdev stream,id=lsbproxy0,server=off,addr.type=inet,addr.host=127.0.0.1,addr.port=<proxy-port>
+-device virtio-net-pci,netdev=lsbproxy0,mac=<generated-local-mac>
+```
+
+The diagnostic display redacts the ephemeral proxy port as `<proxy-port>`.
+It must not show QEMU `user` networking, `hostfwd`, TAP, bridge, NAT, literal
+secret values, or guest-visible secret placeholders.
+
+Actionable failure checks:
+
+- Default sandbox has outbound network: inspect `qemu.argv.redacted.txt`; this
+  is a regression unless `-nic none` is present and no `-netdev` is present.
+- Allow-net sandbox has no connectivity: confirm the proxy thread started, the
+  QEMU stream listener is bound to `127.0.0.1`, and QEMU argv uses
+  `server=off` with the redacted loopback port.
+- Legacy attachment rejected: Windows intentionally rejects fd/socketpair
+  network attachments because that path is macOS-only and bypass-prone.
+- Non-loopback proxy endpoint rejected: Windows proxy attachments must stay on
+  loopback; public control/proxy listeners are not supported.
+- Allowed domain fails: capture the requested hostname/SNI/HTTP Host and proxy
+  policy decision, but do not log payload bytes or secret values.
+- Blocked domain, direct IP, or missing domain succeeds: treat as a security
+  bug. The proxy must enforce configured allowlists before upstream connect and
+  before secret substitution.
+- Secret appears in QEMU argv, guest env, serial log, proxy log, or diagnostics:
+  treat as a security bug. Guest env should contain only placeholder tokens and
+  substitution should occur only in the host-side proxy path for configured
+  destinations.
+
+Logs may include sanitized domain names, policy decision names, local ephemeral
+ports, and high-level errors. They must not include proxy payloads, literal host
+secret values, unredacted guest environment dumps, or full unredacted QEMU argv.

@@ -73,7 +73,7 @@ Hardware workflow:
 | M09 | Copy-in/copy-out tests for files, dirs, empty dirs, large files, path traversal rejection. |
 | M10 | Mount MVP conformance tests for read-only source semantics and isolated writes. |
 | M11 | Host-to-guest port forwarding works without guest NIC or QEMU `hostfwd`; host listeners bind loopback, invalid/duplicate ports fail clearly, Windows argv remains `-nic none`, and the WHPX smoke reaches a guest-local TCP service through host `127.0.0.1`. |
-| M12 | No-network default test; allowed-domain test; blocked-domain/direct-IP test; secret substitution redaction test. |
+| M12 | No-network default test; policy-mediated proxy argv test; allowed-domain test; blocked-domain/direct-IP test; unsupported attachment rejection; secret placeholder/redaction test; WHPX network policy/proxy smoke. |
 | M13 | Checkpoint create/list/restore/delete tests for Windows MVP path. |
 | M14 | Node package install/import smoke on Windows after Rust backend works. |
 | M15 | CI jobs split correctly and diagnostics artifacts uploaded. |
@@ -127,6 +127,9 @@ cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
 # Run host-to-guest port-forward smoke once M11 exists
 cargo test -p lsb-vm windows_qemu_port_forward_smoke -- --ignored --nocapture
 
+# Run network policy/proxy smoke once M12 exists
+cargo test -p lsb-sdk windows_qemu_network_policy_proxy_smoke -- --ignored --nocapture
+
 # Run all Windows integration tests once M15 exists
 cargo test --workspace --features windows-integration -- --ignored --nocapture
 ```
@@ -170,6 +173,15 @@ the LocalSandbox forwarding channel, verifies response bytes from the Windows
 host, drops the forwarding handle, and verifies the host listener closes. It
 does not validate general Windows networking or any arbitrary guest outbound
 access.
+
+The M12 smoke uses the same asset variables after the boot/exec/copy/mount and
+port-forward smokes. It starts a sandbox with existing allow-net configuration,
+attaches the Windows guest NIC only to the LocalSandbox proxy stream path,
+verifies an allowed HTTP destination succeeds, verifies direct-IP and
+non-allowlisted destinations fail closed, checks the guest receives a secret
+placeholder instead of the literal host secret, and inspects the redacted argv
+for `-netdev stream` with no QEMU user networking, `hostfwd`, TAP, bridge, or
+secret material.
 
 If the asset variables are absent, the smoke lane must print an explicit skip
 message and must not claim direct boot validation.
