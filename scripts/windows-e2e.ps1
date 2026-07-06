@@ -695,13 +695,14 @@ function Test-ProxyExposeHostWorkflow {
     -ResponseText "host-expose-ok"
 
   try {
-    $proxyScript = @'
-set -eu
-command -v curl >/dev/null
-body="$(curl -fsS --max-time 20 "http://host.lsb.internal:__GUEST_PORT__/e2e")"
-test "$body" = "host-expose-ok"
-printf "proxy-expose-ok\n"
-'@.Replace("__GUEST_PORT__", $guestPort.ToString())
+    $proxyScript = @(
+      'set -eu',
+      'command -v curl >/dev/null',
+      'body="$(curl -fsS --max-time 20 "http://host.lsb.internal:__GUEST_PORT__/e2e")"',
+      'test "$body" = "host-expose-ok"',
+      'printf "proxy-expose-ok\n"'
+    ) -join '; '
+    $proxyScript = $proxyScript.Replace("__GUEST_PORT__", $guestPort.ToString())
 
     $result = Invoke-LsbCli (@("run") + (Get-CommonVmArgs) + @(
       "--allow-net",
