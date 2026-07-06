@@ -1,0 +1,104 @@
+# Windows Backend Architecture
+
+This document summarizes the current Windows backend layout and boundaries.
+Read source before editing; this is a map, not an API contract.
+
+## Backend shape
+
+```text
+CLI / Rust SDK / Node
+        |
+        v
+lsb-vm: product lifecycle and platform-neutral API
+        |
+        v
+lsb-platform platform backend boundary
+        |
+        +--> macOS Virtualization.framework backend
+        |
+        +--> Windows QEMU + WHPX backend
+                    |
+                    +--> QEMU discovery and preflight
+                    +--> QEMU argv builder and redaction
+                    +--> QEMU process supervisor and Job Object cleanup
+                    +--> direct Linux boot and diagnostics
+                    +--> virtio-serial control and forwarding transports
+                    +--> Windows copy/mount/checkpoint strategies
+                    +--> Windows proxy stream attachment
+```
+
+Inside the VM, the guest is still Linux plus `lsb-guest`. Windows changes the
+transport and host backend, not the product model.
+
+## Current implementation areas
+
+| Area | Paths | Notes |
+|---|---|---|
+| VM orchestration | `crates/lsb-vm` | Platform-neutral sandbox lifecycle, exec/file/mount/port APIs, Windows smoke hooks. Keep public APIs platform-neutral. |
+| Platform backend | `crates/lsb-platform/src/windows_x86_64` | Windows QEMU/WHPX backend, QEMU modules, control transport, fs planning, networking attachment, backend startup. |
+| QEMU support | `crates/lsb-platform/src/windows_x86_64/qemu` | Discovery, version/preflight, argv, process, boot, and diagnostic artifacts. |
+| Control and forwarding | `crates/lsb-platform/src/windows_x86_64/control`, `crates/lsb-proto`, `crates/lsb-guest` | Virtio-serial streams carry existing `lsb-proto` frames. Port forwarding uses a separate virtio-serial channel. |
+| File and mounts | `crates/lsb-platform/src/windows_x86_64/fs`, `crates/lsb-vm`, `crates/lsb-guest` | Copy-in/copy-out plus guest staging for mount MVP. No live host share. |
+| Networking and secrets | `crates/lsb-proxy`, Windows platform network glue | LocalSandbox proxy policy remains authoritative. Windows uses QEMU stream netdev only for allow-net/proxy. |
+| Store/checkpoints | `crates/lsb-store`, `crates/lsb-sdk`, Windows platform disk handling | Windows uses qcow2 overlays and flattened qcow2 checkpoints. macOS CAS/NBD remains unchanged. |
+| CLI | `crates/lsb-cli` | Preserve public flags and product behavior; surface platform capability errors. |
+| Rust SDK | `crates/lsb-sdk` | Preserve API shape; Windows runtime and checkpoint smoke coverage lives here. |
+| Node binding | `bindings/nodejs` | `win32-x64-msvc` package metadata, Windows native target, loader error patching, and Windows smoke script. |
+| CI/scripts | `.github/workflows`, `scripts/` | Hosted Windows compile/unit/golden CI and manual self-hosted WHPX workflow. |
+
+## Boundaries
+
+- `lsb-sdk`, CLI, and Node should not know QEMU argv syntax, named pipe paths,
+  Job Object details, or WHPX quirks.
+- `lsb-vm` owns product-level sandbox operations and calls platform-neutral
+  backend hooks.
+- `lsb-platform` owns VM/device/process details and Windows-specific error
+  context.
+- `lsb-proto` owns product protocol semantics. Transport adapters must not
+  replace protocol operations with QMP or QGA behavior.
+- `lsb-proxy` owns domain allowlists, DNS-answer binding, and secret
+  substitution. QEMU networking is only an attachment mechanism.
+- `lsb-store` owns checkpoint product semantics. QEMU snapshots are not the
+  product checkpoint abstraction.
+
+## QEMU-specific responsibilities
+
+| Component | Owns | Must not own |
+|---|---|---|
+| `QemuDiscovery` / preflight | Locating QEMU, version capture, WHPX capability probes, actionable diagnostics | Product feature policy or hidden production fallback to TCG |
+| QEMU argv builder | Deterministic structured argv and redacted diagnostic rendering | CLI parsing or secret policy |
+| QEMU process supervisor | Spawn, stdout/stderr capture, status artifacts, Windows Job Object cleanup | Guest protocol semantics |
+| Boot orchestration | Asset checks, direct Linux boot, serial/preflight/status artifacts, readiness wait | Public API shape |
+| Virtio-serial transport | Private host/guest byte streams for control and forwarding | Network/mount/checkpoint policy decisions |
+
+## Error expectations
+
+Prefer structured errors with stable categories and actionable remediation.
+Useful categories include:
+
+- `UnsupportedPlatform`
+- `MissingQemu`
+- `UnsupportedQemuVersion`
+- `WhpxUnavailable`
+- `AssetMissing`
+- `QemuStartFailed`
+- `GuestBootTimeout`
+- `ControlTransportUnavailable`
+- `GuestProtocolError`
+- `FeatureUnsupportedOnWindows`
+- `NetworkPolicyViolation`
+- `CheckpointUnsupported`
+
+Every user-facing error should state what failed, likely cause, safe
+remediation, and relevant artifact paths. Redact before logs leave the owning
+component.
+
+## Public API guardrails
+
+Do not change without an accepted decision:
+
+- CLI flag names or default behavior.
+- Rust SDK public types and methods.
+- Node public API shape.
+- Existing macOS behavior.
+- Existing `lsb-proto` operation semantics.

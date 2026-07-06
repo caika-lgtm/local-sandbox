@@ -2,10 +2,16 @@
 
 ## 2. Status
 
-Status: Draft  
-Author: Cai Kaian  
-Date: 2026-07-02  
-Target repo path: `docs/rfc-qemu-whpx.md`
+Status: Historical RFC; Windows MVP implemented for upstream review
+Author: Cai Kaian
+Date: 2026-07-02
+Target repo path: `docs/windows-port/rfc-qemu-whpx.md`
+
+Post-MVP note: this RFC is retained for design rationale and alternatives. The
+current implementation status, limitations, validation evidence, and follow-up
+work are tracked in `docs/windows-port/mvp-handoff.md`,
+`docs/windows-port/decisions.md`, and the other durable docs in
+`docs/windows-port/`.
 
 ## 3. Executive Summary
 
@@ -320,7 +326,7 @@ Potential changes:
 
 ### 10.5 Illustrative QEMU command
 
-This command is illustrative. The implementation must construct argv as a vector, never by shell-concatenating strings. The MVP uses a conservative `Westmere` CPU model for WHPX compatibility; see `agent-workspace/decisions.md` D020.
+This command is illustrative. The implementation must construct argv as a vector, never by shell-concatenating strings. The MVP uses a conservative `Westmere` CPU model for WHPX compatibility; see `decisions.md` D020.
 
 ```powershell
 qemu-system-x86_64.exe `
@@ -1536,7 +1542,7 @@ Rejected. VirtioFS is the desired long-term semantic direction, but Windows host
 
 ## 22. Appendix A: Example QEMU Commands
 
-These commands are illustrative. The implementation must use structured argv construction. The MVP uses a conservative `Westmere` CPU model for WHPX compatibility; see `agent-workspace/decisions.md` D020.
+These commands are illustrative. The implementation must use structured argv construction. The MVP uses a conservative `Westmere` CPU model for WHPX compatibility; see `decisions.md` D020.
 
 ### A.1 Minimal boot, no control, serial log only
 
