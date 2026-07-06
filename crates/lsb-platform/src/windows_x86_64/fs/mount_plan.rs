@@ -5,12 +5,14 @@ use std::path::PathBuf;
 
 use lsb_proto::MountRequest;
 
+use super::smb::{WindowsSmbAccess, WindowsSmbMount};
 use super::{
     join_guest_child, plan_copy_in, validate_guest_absolute_path, validate_guest_path_component,
     CopyInEntryKind, CopyInPlan, CopyPathError, CopyPathOperation,
 };
 
 pub const WINDOWS_MOUNT_STAGING_ROOT: &str = "/tmp/lsb/mounts";
+const MS_RDONLY: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowsMountMode {
@@ -58,6 +60,7 @@ impl WindowsMountSpec {
 #[derive(Debug, Clone)]
 pub struct WindowsMountPlan {
     pub imports: Vec<WindowsMountImport>,
+    pub smb_directs: Vec<WindowsSmbMount>,
     pub mount_requests: Vec<MountRequest>,
 }
 
@@ -76,7 +79,7 @@ pub enum WindowsMountPlanError {
     SourceNotDirectory { tag: String, path: String },
     DuplicateTarget { target: String },
     ReservedTarget { target: String },
-    UnsupportedDirectMount { target: String, flags: u64 },
+    UnsupportedDirectMountFlags { target: String, flags: u64 },
 }
 
 impl fmt::Display for WindowsMountPlanError {
@@ -95,9 +98,9 @@ impl fmt::Display for WindowsMountPlanError {
                 f,
                 "Windows mount target '{target}' is reserved for LocalSandbox mount staging"
             ),
-            Self::UnsupportedDirectMount { target, flags } => write!(
+            Self::UnsupportedDirectMountFlags { target, flags } => write!(
                 f,
-                "Windows mount target '{target}' uses direct mount flags {flags}; direct host mounts, including direct read-write host mounts, are unsupported on Windows. Use overlay/ro mounts for copy-import semantics."
+                "Windows direct mount target '{target}' uses unsupported flags {flags}; Windows direct SMB mounts support only flags 0 or MS_RDONLY"
             ),
         }
     }
@@ -115,6 +118,7 @@ pub fn plan_windows_mounts(
     specs: &[WindowsMountSpec],
 ) -> Result<WindowsMountPlan, WindowsMountPlanError> {
     let mut imports = Vec::new();
+    let mut smb_directs = Vec::new();
     let mut mount_requests = Vec::new();
     let mut targets = HashSet::new();
 
@@ -156,16 +160,29 @@ pub fn plan_windows_mounts(
                 });
             }
             WindowsMountMode::Direct { flags } => {
-                return Err(WindowsMountPlanError::UnsupportedDirectMount {
-                    target: spec.guest_path.clone(),
-                    flags,
-                });
+                let access = match flags {
+                    0 => WindowsSmbAccess::ReadWrite,
+                    MS_RDONLY => WindowsSmbAccess::ReadOnly,
+                    _ => {
+                        return Err(WindowsMountPlanError::UnsupportedDirectMountFlags {
+                            target: spec.guest_path.clone(),
+                            flags,
+                        });
+                    }
+                };
+                smb_directs.push(plan_direct_smb_mount(
+                    &spec.tag,
+                    &spec.host_path,
+                    &spec.guest_path,
+                    access,
+                )?);
             }
         }
     }
 
     Ok(WindowsMountPlan {
         imports,
+        smb_directs,
         mount_requests,
     })
 }
@@ -190,8 +207,35 @@ pub fn replan_windows_mount_import(
     })
 }
 
+pub fn replan_windows_smb_mount(
+    mount: &WindowsSmbMount,
+) -> Result<WindowsSmbMount, WindowsMountPlanError> {
+    plan_direct_smb_mount("direct", &mount.source, &mount.target, mount.access)
+}
+
 pub fn windows_mount_guest_source(tag: &str) -> String {
     join_guest_child(&join_guest_child(WINDOWS_MOUNT_STAGING_ROOT, tag), "source")
+}
+
+fn plan_direct_smb_mount(
+    tag: &str,
+    host_path: &std::path::Path,
+    guest_path: &str,
+    access: WindowsSmbAccess,
+) -> Result<WindowsSmbMount, WindowsMountPlanError> {
+    let validation_plan = plan_copy_in(host_path, guest_path)?;
+    if !copy_plan_root_is_directory(&validation_plan) {
+        return Err(WindowsMountPlanError::SourceNotDirectory {
+            tag: tag.to_string(),
+            path: host_path.display().to_string(),
+        });
+    }
+
+    Ok(WindowsSmbMount {
+        source: validation_plan.source_root,
+        target: guest_path.to_string(),
+        access,
+    })
 }
 
 fn copy_plan_root_is_directory(plan: &CopyInPlan) -> bool {
@@ -257,20 +301,62 @@ mod tests {
     }
 
     #[test]
-    fn mount_plan_rejects_direct_mounts_on_windows() {
+    fn mount_plan_accepts_direct_read_write_as_smb_mount() {
+        let source = host_fixture_dir("direct-rw");
+        let plan =
+            plan_windows_mounts(&[WindowsMountSpec::direct("mount0", &source, "/workspace", 0)])
+                .expect("direct read-write mount should plan as SMB");
+
+        assert!(plan.imports.is_empty());
+        assert!(plan.mount_requests.is_empty());
+        assert_eq!(plan.smb_directs.len(), 1);
+        assert_eq!(plan.smb_directs[0].source, source.canonicalize().unwrap());
+        assert_eq!(plan.smb_directs[0].target, "/workspace");
+        assert_eq!(plan.smb_directs[0].access, WindowsSmbAccess::ReadWrite);
+
+        let _ = fs::remove_dir_all(source.parent().unwrap());
+    }
+
+    #[test]
+    fn mount_plan_accepts_direct_read_only_as_smb_mount() {
+        let source = host_fixture_dir("direct-ro");
+        let plan = plan_windows_mounts(&[WindowsMountSpec::direct(
+            "mount0",
+            &source,
+            "/workspace",
+            MS_RDONLY,
+        )])
+        .expect("direct read-only mount should plan as SMB");
+
+        assert!(plan.imports.is_empty());
+        assert!(plan.mount_requests.is_empty());
+        assert_eq!(plan.smb_directs.len(), 1);
+        assert_eq!(plan.smb_directs[0].access, WindowsSmbAccess::ReadOnly);
+
+        let _ = fs::remove_dir_all(source.parent().unwrap());
+    }
+
+    #[test]
+    fn mount_plan_rejects_unsupported_direct_mount_flags() {
+        let source = host_fixture_dir("direct-flags");
         let err = plan_windows_mounts(&[WindowsMountSpec::direct(
             "mount0",
-            host_fixture_dir("direct"),
+            &source,
             "/workspace",
-            0,
+            MS_RDONLY | 2,
         )])
-        .expect_err("direct mounts should fail");
+        .expect_err("unsupported direct mount flags should fail");
 
         assert!(matches!(
             err,
-            WindowsMountPlanError::UnsupportedDirectMount { flags: 0, .. }
+            WindowsMountPlanError::UnsupportedDirectMountFlags { flags, .. }
+                if flags == MS_RDONLY | 2
         ));
-        assert!(err.to_string().contains("direct read-write host mounts"));
+        assert!(err
+            .to_string()
+            .contains("support only flags 0 or MS_RDONLY"));
+
+        let _ = fs::remove_dir_all(source.parent().unwrap());
     }
 
     #[test]

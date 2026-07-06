@@ -29,6 +29,11 @@ use crossbeam_channel::Receiver;
 #[cfg(target_os = "macos")]
 use lsb_platform::terminal;
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use lsb_platform::windows_x86_64::fs::smb::{
+    WindowsSmbActiveResources, WindowsSmbLifecycleConfig, WindowsSmbLifecycleManager,
+    WindowsSmbMount,
+};
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use lsb_platform::windows_x86_64::fs::{
     join_guest_child, open_copy_in_file_checked, plan_copy_in, validate_copy_out_destination,
     validate_guest_absolute_path, validate_guest_path_component,
@@ -37,14 +42,16 @@ use lsb_platform::windows_x86_64::fs::{
 };
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use lsb_platform::windows_x86_64::fs::{
-    plan_windows_mounts, replan_windows_mount_import, WindowsMountImport, WindowsMountMode,
-    WindowsMountSpec,
+    plan_windows_mounts, replan_windows_mount_import, replan_windows_smb_mount, WindowsMountImport,
+    WindowsMountMode, WindowsMountSpec,
 };
 use lsb_platform::PlatformControlStream;
 use lsb_platform::{
     self, PlatformNetworkAttachment, PlatformSharedDir, PlatformVm, PlatformVmConfig, VmState,
 };
 
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use lsb_proto::CAP_CIFS_MOUNT;
 use lsb_proto::{
     frame, ChmodRequest, CopyRequest, ExecRequest, FsOkResponse, MkdirRequest, MountRequest,
     MountResponse, PortMapping, ReadDirRequest, ReadDirResponse, ReadFileRequest, RemoveRequest,
@@ -87,7 +94,7 @@ fn unsupported_runtime(capability: &'static str, detail: &'static str) -> anyhow
 
 // --- Mount types ---
 
-#[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+#[cfg(any(not(all(target_os = "windows", target_arch = "x86_64")), test))]
 const MS_RDONLY: u64 = 1;
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 static COPY_OUT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -221,6 +228,8 @@ impl VmConfigBuilder {
 
         let memory_bytes = self.memory_mb * 1024 * 1024;
         let mount_plan = build_mount_plan(&self.mounts)?;
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        let windows_smb_instance_id = windows_smb_instance_id(&rootfs_path);
 
         Ok(Sandbox {
             vm: lsb_platform::create_vm(PlatformVmConfig {
@@ -240,6 +249,12 @@ impl VmConfigBuilder {
             mounts: Mutex::new(mount_plan.mount_requests),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_mounts: Mutex::new(mount_plan.windows_imports),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_mounts: Mutex::new(mount_plan.windows_smb_mounts),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_resources: Mutex::new(None),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_instance_id,
             #[cfg(not(target_os = "macos"))]
             control_session: Mutex::new(()),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -255,6 +270,12 @@ pub struct Sandbox {
     mounts: Mutex<Vec<MountRequest>>,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     windows_mounts: Mutex<Vec<WindowsMountImport>>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    windows_smb_mounts: Mutex<Vec<WindowsSmbMount>>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    windows_smb_resources: Mutex<Option<WindowsSmbActiveResources>>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    windows_smb_instance_id: String,
     #[cfg(not(target_os = "macos"))]
     control_session: Mutex<()>,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -266,6 +287,8 @@ struct SandboxMountPlan {
     mount_requests: Vec<MountRequest>,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     windows_imports: Vec<WindowsMountImport>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    windows_smb_mounts: Vec<WindowsSmbMount>,
 }
 
 fn build_mount_plan(mounts: &[MountConfig]) -> Result<SandboxMountPlan> {
@@ -364,6 +387,7 @@ fn build_windows_mount_plan(mounts: &[MountConfig]) -> Result<SandboxMountPlan> 
         shared_dirs: Vec::new(),
         mount_requests: plan.mount_requests,
         windows_imports: plan.imports,
+        windows_smb_mounts: plan.smb_directs,
     })
 }
 
@@ -373,11 +397,20 @@ impl Sandbox {
     }
 
     pub fn start(&self) -> Result<()> {
-        self.vm.start().context("Failed to start VM")?;
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        self.prepare_windows_smb_mounts()
+            .context("Failed to prepare Windows SMB mounts")?;
+
+        if let Err(error) = self.vm.start().context("Failed to start VM") {
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            self.cleanup_windows_smb_mounts_best_effort();
+            return Err(error);
+        }
 
         #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
         if let Err(error) = self.initialize_windows_mounts() {
             let _ = self.vm.stop();
+            self.cleanup_windows_smb_mounts_best_effort();
             return Err(error).context("Failed to initialize Windows mounts");
         }
 
@@ -385,7 +418,25 @@ impl Sandbox {
     }
 
     pub fn stop(&self) -> Result<()> {
-        self.vm.stop().context("Failed to stop VM")
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            self.sync_windows_smb_mounts_best_effort();
+            let stop_result = self.vm.stop().context("Failed to stop VM");
+            let cleanup_result = self.cleanup_windows_smb_mounts();
+            match (stop_result, cleanup_result) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(error), Ok(())) => Err(error),
+                (Ok(()), Err(error)) => Err(error).context("Failed to clean up Windows SMB mounts"),
+                (Err(stop_error), Err(cleanup_error)) => Err(stop_error).context(format!(
+                    "Failed to stop VM; additionally failed to clean up Windows SMB mounts: {cleanup_error}"
+                )),
+            }
+        }
+
+        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+        {
+            self.vm.stop().context("Failed to stop VM")
+        }
     }
 
     pub fn state_channel(&self) -> Receiver<VmState> {
@@ -1361,6 +1412,14 @@ impl Sandbox {
             .any(|capability| capability == CAP_FILE_RANGE_IO)
     }
 
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn supports_cifs_mount(&self) -> bool {
+        self.vm
+            .guest_capabilities()
+            .iter()
+            .any(|capability| capability == CAP_CIFS_MOUNT)
+    }
+
     fn ensure_file_range_io(&self, operation: &str) -> Result<()> {
         if self.supports_file_range_io() {
             Ok(())
@@ -1369,6 +1428,18 @@ impl Sandbox {
                 "{operation} requires guest capability '{}' for chunked transfers larger than {} bytes",
                 CAP_FILE_RANGE_IO,
                 frame::MAX_FRAME_PAYLOAD
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn ensure_cifs_mount(&self, operation: &str) -> Result<()> {
+        if self.supports_cifs_mount() {
+            Ok(())
+        } else {
+            bail!(
+                "{operation} requires guest capability '{}'. Run `lsb upgrade` and recreate the checkpoint to enable Windows direct mounts.",
+                CAP_CIFS_MOUNT
             );
         }
     }
@@ -1455,17 +1526,138 @@ impl Sandbox {
     }
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn prepare_windows_smb_mounts(&self) -> Result<()> {
+        let mounts = self
+            .windows_smb_mounts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB mount lock poisoned"))?
+            .clone();
+        if mounts.is_empty() {
+            return Ok(());
+        }
+
+        if self
+            .windows_smb_resources
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB resource lock poisoned"))?
+            .is_some()
+        {
+            bail!("Windows SMB mount resources are already active; stop the sandbox before starting it again");
+        }
+
+        let mut refreshed_mounts = Vec::with_capacity(mounts.len());
+        for mount in &mounts {
+            let refreshed = replan_windows_smb_mount(mount).with_context(|| {
+                format!(
+                    "revalidating Windows SMB mount target '{}' source before sharing",
+                    mount.target
+                )
+            })?;
+            refreshed_mounts.push(refreshed);
+        }
+
+        let config =
+            WindowsSmbLifecycleConfig::new(self.windows_smb_instance_id.clone(), refreshed_mounts);
+        let mut manager = WindowsSmbLifecycleManager::native();
+        let mut resources = manager.prepare(&config)?;
+
+        {
+            let mut pending_mounts = self
+                .mounts
+                .lock()
+                .map_err(|_| anyhow::anyhow!("mount request lock poisoned"))?;
+            pending_mounts.extend(resources.mount_requests().iter().cloned());
+        }
+        resources.mount_requests.clear();
+
+        *self
+            .windows_smb_resources
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB resource lock poisoned"))? = Some(resources);
+
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn cleanup_windows_smb_mounts(&self) -> Result<()> {
+        self.remove_windows_smb_mount_requests()?;
+
+        let resources = self
+            .windows_smb_resources
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB resource lock poisoned"))?
+            .take();
+        let Some(resources) = resources else {
+            return Ok(());
+        };
+
+        let mut manager = WindowsSmbLifecycleManager::native();
+        manager.cleanup(resources)?;
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn cleanup_windows_smb_mounts_best_effort(&self) {
+        if let Err(error) = self.cleanup_windows_smb_mounts() {
+            tracing::debug!("Windows SMB mount cleanup failed: {}", error);
+        }
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn remove_windows_smb_mount_requests(&self) -> Result<()> {
+        let mut mounts = self
+            .mounts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mount request lock poisoned"))?;
+        mounts.retain(|request| !matches!(request, MountRequest::Smb { .. }));
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn has_windows_smb_resources(&self) -> bool {
+        self.windows_smb_resources
+            .lock()
+            .map(|resources| resources.is_some())
+            .unwrap_or(false)
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn sync_windows_smb_mounts_best_effort(&self) {
+        if !self.has_windows_smb_resources() {
+            return;
+        }
+
+        let _ = self.exec(&["sync"], &mut std::io::sink(), &mut std::io::sink());
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     fn initialize_windows_mounts(&self) -> Result<()> {
         let imports = self
             .windows_mounts
             .lock()
             .map_err(|_| anyhow::anyhow!("Windows mount import lock poisoned"))?
             .clone();
-        if imports.is_empty() {
+        let has_pending_mounts = !self
+            .mounts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mount request lock poisoned"))?
+            .is_empty();
+        let has_pending_smb_mounts = self
+            .mounts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mount request lock poisoned"))?
+            .iter()
+            .any(|request| matches!(request, MountRequest::Smb { .. }));
+        if imports.is_empty() && !has_pending_mounts {
             return Ok(());
         }
 
-        self.ensure_file_range_io("Windows mount import")?;
+        if !imports.is_empty() {
+            self.ensure_file_range_io("Windows mount import")?;
+        }
+        if has_pending_smb_mounts {
+            self.ensure_cifs_mount("Windows SMB direct mount")?;
+        }
         for import in &imports {
             let refreshed = replan_windows_mount_import(import).with_context(|| {
                 format!(
@@ -1552,6 +1744,17 @@ fn collect_exec_response(
             None => bail!("guest closed exec stream before exit"),
         }
     }
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn windows_smb_instance_id(rootfs_path: &str) -> String {
+    Path::new(rootfs_path)
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("sandbox")
+        .to_string()
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -2067,6 +2270,12 @@ mod tests {
             mounts: Mutex::new(mount_requests),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_mounts: Mutex::new(Vec::new()),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_mounts: Mutex::new(Vec::new()),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_resources: Mutex::new(None),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_instance_id: "test-instance".to_string(),
             #[cfg(not(target_os = "macos"))]
             control_session: Mutex::new(()),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -2187,19 +2396,60 @@ mod tests {
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     #[test]
-    fn windows_direct_mount_plan_fails_closed() {
+    fn windows_direct_mount_plan_uses_smb_lifecycle_inputs() {
+        let root = temp_dir("direct-mount-plan");
+        let rw_source = root.join("rw");
+        let ro_source = root.join("ro");
+        std::fs::create_dir_all(&rw_source).expect("rw source dir");
+        std::fs::create_dir_all(&ro_source).expect("ro source dir");
+
+        let plan = build_mount_plan(&[
+            MountConfig::Direct {
+                host_path: rw_source.display().to_string(),
+                guest_path: "/workspace".into(),
+                flags: 0,
+            },
+            MountConfig::Direct {
+                host_path: ro_source.display().to_string(),
+                guest_path: "/readonly".into(),
+                flags: MS_RDONLY,
+            },
+        ])
+        .expect("Windows direct mount plan should build");
+
+        assert!(plan.shared_dirs.is_empty());
+        assert!(plan.windows_imports.is_empty());
+        assert!(plan.mount_requests.is_empty());
+        assert_eq!(plan.windows_smb_mounts.len(), 2);
+        assert_eq!(plan.windows_smb_mounts[0].target, "/workspace");
+        assert!(!plan.windows_smb_mounts[0].access.read_only());
+        assert_eq!(plan.windows_smb_mounts[1].target, "/readonly");
+        assert!(plan.windows_smb_mounts[1].access.read_only());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    #[test]
+    fn windows_direct_mount_plan_rejects_unsupported_flags() {
+        let root = temp_dir("direct-mount-flags");
+        let source = root.join("src");
+        std::fs::create_dir_all(&source).expect("source dir");
+
         let err = match build_mount_plan(&[MountConfig::Direct {
-            host_path: r"C:\project".into(),
+            host_path: source.display().to_string(),
             guest_path: "/workspace".into(),
-            flags: 0,
+            flags: MS_RDONLY | 2,
         }]) {
-            Ok(_) => panic!("Windows direct host mounts should fail"),
+            Ok(_) => panic!("Windows direct mount unsupported flags should fail"),
             Err(error) => error,
         };
 
         let message = err.to_string();
-        assert!(message.contains("direct host mounts"));
-        assert!(message.contains("unsupported on Windows"));
+        assert!(message.contains("unsupported flags"));
+        assert!(message.contains("MS_RDONLY"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
