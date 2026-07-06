@@ -114,12 +114,15 @@ when those GitHub environment variables are present. It no longer scans every
 only when `-IncludeRunnerLogs` is used with `LSB_DIAGNOSTICS_RUN_STARTED_UTC`
 or `-RunnerDiagSinceUtc`, and only files modified inside that bounded window
 are eligible; for those files, only timestamped log lines inside the bounded
-window and their continuation lines are copied. The collector allowlists
-environment variables and file extensions, redacts known secret values from
-environment variables whose names look secret-bearing, and also redacts common
+window and their continuation lines are copied. Workspace `target` logs are
+timestamp-scoped when the run-start timestamp is set; external persistent
+`CARGO_TARGET_DIR` caches are not uploaded. The collector allowlists environment
+variables and file extensions, redacts known secret values from environment
+variables whose names look secret-bearing, and also redacts common
 token/private-key patterns. It does not upload raw environment dumps, boot
 assets, rootfs images, qcow2 disks, npm caches, private keys, stale stage-root
-contents, historical runner log lines, or unredacted QEMU argv.
+contents, historical runner log lines, persistent target-cache logs, or
+unredacted QEMU argv.
 
 For current M07 Windows boots, `boot.status.json` records state `guest_ready`
 and success definition
@@ -270,6 +273,7 @@ Cargo logs; it must not contain WHPX smoke artifacts because hosted runners do
 not run QEMU boot tests.
 
 When the manual self-hosted WHPX workflow runs, it uploads
+`windows-lsb-diagnostics-probe` after the smoke/e2e boot-cache probe and
 `windows-lsb-diagnostics` after `check`, `unit`, `smoke`, and `e2e` lanes. The
 smoke/e2e bundle should contain, when present:
 

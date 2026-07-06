@@ -54,6 +54,10 @@ jobs:
           clean: false
           fetch-depth: 1
 
+      - name: Mark diagnostic collection start
+        run: |
+          "LSB_DIAGNOSTICS_RUN_STARTED_UTC=$((Get-Date).ToUniversalTime().ToString('o'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Verify self-hosted Windows runner contract
         run: |
           if ($env:RUNNER_ENVIRONMENT -and $env:RUNNER_ENVIRONMENT -ne "self-hosted") {
@@ -104,6 +108,18 @@ jobs:
           "cache_hit=$cacheHit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Boot asset key: $assetKey"
           Write-Host "Boot asset cache hit: $cacheHit"
+
+      - name: Stage diagnostic logs
+        if: always()
+        run: .\scripts\collect-windows-diagnostics.ps1 -IncludeRunnerLogs -SkipCargoLogs
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-lsb-diagnostics-probe
+          path: target/windows-lsb-diagnostics/**
+          if-no-files-found: ignore
 
   prepare-boot-assets:
     name: Prepare Windows boot assets

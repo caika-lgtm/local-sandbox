@@ -523,17 +523,26 @@ if ($artifactDirectories.Count -eq 0) {
 }
 
 if (-not $SkipCargoLogs) {
+  $diagnosticsSince = Get-RunnerDiagSince
   $workspaceTarget = Join-Path (Get-Location) "target"
   Copy-DiagnosticTree `
     -SourceRoot $workspaceTarget `
     -DestinationRoot (Join-Path $script:StageRootResolved "workspace-target-logs") `
-    -AllowedExtensions @(".log")
+    -AllowedExtensions @(".log") `
+    -ModifiedSinceUtc $diagnosticsSince
 
   if ($env:CARGO_TARGET_DIR -and (Test-Path -LiteralPath $env:CARGO_TARGET_DIR)) {
-    Copy-DiagnosticTree `
-      -SourceRoot $env:CARGO_TARGET_DIR `
-      -DestinationRoot (Join-Path $script:StageRootResolved "cargo-target-logs") `
-      -AllowedExtensions @(".log")
+    $resolvedCargoTarget = (Resolve-Path -LiteralPath $env:CARGO_TARGET_DIR).Path
+    $resolvedWorkspaceTarget = $null
+    if (Test-Path -LiteralPath $workspaceTarget) {
+      $resolvedWorkspaceTarget = (Resolve-Path -LiteralPath $workspaceTarget).Path
+    }
+
+    if ($resolvedWorkspaceTarget -and $resolvedCargoTarget -eq $resolvedWorkspaceTarget) {
+      $script:SkippedFiles.Add("$resolvedCargoTarget (already collected from workspace target logs)")
+    } else {
+      $script:SkippedFiles.Add("$resolvedCargoTarget (external CARGO_TARGET_DIR skipped to avoid persistent-cache diagnostics)")
+    }
   }
 }
 

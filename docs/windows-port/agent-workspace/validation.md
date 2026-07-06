@@ -110,7 +110,6 @@ target\windows-lsb-diagnostics\
   lsb-assets-work\<run-id>-<attempt>\ # current run only
   actions-runner\                  # self-hosted workflow only, timestamp bounded
   workspace-target-logs\
-  cargo-target-logs\
 ```
 
 The collector copies only allowlisted text-like diagnostic files (`.json`,
@@ -120,6 +119,10 @@ common token/private-key patterns before upload. It deletes and recreates
 `C:\lsb-assets\work\*` directories, and includes runner `_diag` logs only when
 the self-hosted workflow has set `LSB_DIAGNOSTICS_RUN_STARTED_UTC`; copied
 runner logs are filtered to timestamped lines inside that window.
+Workspace `target` logs are timestamp-scoped when that variable is present.
+External persistent `CARGO_TARGET_DIR` caches such as
+`C:\target_cache\<owner>\<repo>` are recorded as skipped in the manifest rather
+than uploaded.
 Environment capture is allowlisted; it is not a raw environment dump.
 
 ## Manual validation commands
