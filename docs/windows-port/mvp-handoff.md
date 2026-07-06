@@ -42,8 +42,10 @@ It is the current status source for future agents.
 - No Windows ARM64 support.
 - No QEMU bundled inside CLI archives, OS runtime assets, or npm packages.
 - No normal TCG fallback. Production Windows execution requires WHPX.
-- No direct writable host mounts on Windows.
-- No live host/guest mount synchronization, VirtioFS, 9p, SMB, or custom sync.
+- No direct writable host mounts are implemented in the current Windows MVP.
+  D024 accepts a follow-up SMB/CIFS direct-mount path.
+- No live host/guest mount synchronization for overlay, no-suffix, or CLI `:ro`
+  mounts. Planned SMB/CIFS direct mounts are the only approved live-sharing path.
 - No file `watch` support for live host changes on imported mounts.
 - No interactive shell or streaming `spawn`/kill on Windows.
 - No general mux/session model yet. Non-interactive exec and file transfer are
@@ -58,6 +60,23 @@ It is the current status source for future agents.
 - Native Windows build-number probing is deferred.
 - Self-hosted runner labels still use the default `self-hosted, Windows, X64`
   set and assume one persistent WHPX runner for smoke/e2e cache reuse.
+
+## Accepted post-MVP direct-mount direction
+
+Windows direct directory mounts will use SMB/CIFS once the follow-up
+implementation slices land. The public API shape remains unchanged:
+
+- CLI no-suffix mounts and CLI `:ro` mounts stay overlay snapshot imports.
+- CLI `:rw` plus `--allow-host-writes` becomes an SMB/CIFS direct read-write
+  mount and requires an elevated Administrator shell.
+- SDK and Node `Direct { flags: 0 }` become SMB/CIFS direct read-write mounts.
+- SDK and Node `Direct { flags: MS_RDONLY }` become SMB/CIFS direct read-only
+  mounts.
+- SMB direct mounts must not imply arbitrary outbound `allow_net`; they use the
+  LocalSandbox-controlled proxy path.
+
+Until implementation and WHPX smoke validation are complete, this section is a
+planning status update rather than a supported runtime behavior claim.
 
 ## Important implementation notes
 
@@ -126,5 +145,6 @@ head.
   streaming spawn, kill, watch, or concurrent forwarding sessions.
 - Decide the post-MVP storage path: CAS/NBD migration, persistent qcow2 chains,
   or another deduplicated checkpoint format.
-- Design live sharing separately if Windows VirtioFS, 9p, SMB, or custom sync
-  becomes product work.
+- Implement and validate the accepted SMB/CIFS direct-mount plan, then revisit
+  broader live-sharing work such as Windows VirtioFS, 9p, or custom sync only if
+  needed.

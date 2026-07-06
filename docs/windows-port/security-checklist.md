@@ -7,8 +7,9 @@ Use this checklist for Windows backend changes and release hardening.
 - Guest workload is untrusted.
 - Host secrets are high-value and must not be copied into the guest by default.
 - QEMU is an attack surface, not a security boundary by itself.
-- The host filesystem must be exposed minimally and read-only from the product
-  perspective.
+- The host filesystem must be exposed minimally. Overlay/import mounts keep host
+  sources read-only from the product perspective; explicit Windows SMB direct
+  mounts may grant host writes only under D024.
 - Localhost sockets, named pipes, QMP endpoints, and temp directories must be
   private to the owning user/session.
 - Network policy must be enforced by LocalSandbox-controlled code, not by QEMU
@@ -75,11 +76,15 @@ Before merging Windows backend work, answer:
 
 ## Files and mounts
 
-- Host source data is read-only from the product perspective.
+- Overlay/import host source data is read-only from the product perspective.
+- CLI `:ro` remains overlay on Windows and must not create a direct SMB mount.
+- Explicit Windows SMB direct mounts require Administrator preflight,
+  recursive source validation, ephemeral users/shares/credentials, reversible
+  NTFS/share ACL grants, and best-effort cleanup.
 - Reject path traversal in copy-in/copy-out and export paths.
 - Reject or explicitly define symlink/junction/reparse behavior before following
   links on Windows.
-- Do not support direct `:rw` host mounts in the Windows MVP.
+- Direct `:rw` host mounts are approved only through the SMB/CIFS path in D024.
 
 ## Networking
 

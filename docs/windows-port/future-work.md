@@ -19,7 +19,7 @@ deleted sprint workspace.
 - Design a mux/session model for virtio-serial before enabling streaming
   `spawn`, shell, kill, file watch, or concurrent port-forward sessions.
 - Decide whether Windows file watch should observe only guest-imported copies or
-  wait for live sharing support.
+  wait for explicit SMB direct mounts or another live-sharing path.
 - Add live checkpointing only after a QMP/block-layer design is accepted.
 - Add native Windows build-number probing through Windows API, registry query,
   or the future diagnostics command.
@@ -33,6 +33,23 @@ deleted sprint workspace.
   internal snapshots.
 
 ## Filesystem sharing experiments
+
+### SMB/CIFS direct mounts
+
+D024 accepts SMB/CIFS as the Windows direct directory mount path. Implement this
+through the slices tracked in the repository `PLAN.md` and `STATE.md`, then
+update user-facing docs only after Windows WHPX smoke validation passes.
+
+Required constraints:
+
+- CLI no-suffix and CLI `:ro` mounts remain overlay snapshot imports.
+- CLI `:rw` plus `--allow-host-writes` becomes SMB/CIFS direct read-write and
+  requires an elevated Administrator shell.
+- SDK and Node direct mounts use the existing public API shape.
+- SMB direct mounts use LocalSandbox-controlled proxy networking and must not
+  imply arbitrary outbound `allow_net`.
+- Host resources are ephemeral and must be cleaned up: local user, SMB shares,
+  generated credentials, and NTFS/share ACL grants.
 
 ### VirtioFS on Windows
 

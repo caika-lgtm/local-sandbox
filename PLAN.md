@@ -821,7 +821,8 @@ Forced share removal data loss:
 
 ## Documentation Updates After Implementation
 
-- Add a new Windows decision superseding "no direct rw mounts".
+- Update the accepted Windows SMB/CIFS direct-mount decision with any
+  implementation or validation evidence that changes the decision record.
 - Document Administrator requirement.
 - Document `:rw` live direct behavior.
 - Document `:ro` remains overlay.

@@ -117,13 +117,17 @@ State the decision precisely.
 - Date: 2026-07-02
 - Decision: Preserve product semantics: host source read-only from product perspective, guest writes isolated, explicit export. Do not require perfect POSIX live sharing in MVP.
 - Consequence: Windows case, symlink, ACL, special-file, and file-watch differences must be documented and tested where supported.
+- Scope note: D024 supersedes this MVP-only host-read-only behavior only for
+  explicitly requested Windows SMB direct mounts. Default, no-suffix, and CLI
+  `:ro` mounts remain snapshot imports with isolated guest writes.
 
 ### D011: Direct `:rw` host mounts are not in Windows MVP
 
-- Status: Accepted
+- Status: Superseded by D024 on 2026-07-06
 - Date: 2026-07-02
-- Decision: Windows MVP does not support direct host-write mounts.
-- Consequence: Requests for `:rw` mounts on Windows must fail with a capability error unless a later decision enables them.
+- Decision: Windows MVP did not support direct host-write mounts.
+- Consequence: This remains the historical MVP behavior until the SMB/CIFS
+  direct-mount implementation lands. D024 controls the approved post-MVP path.
 
 ### D012: No QEMU user networking by default
 
@@ -306,3 +310,64 @@ then `PATH`.
 - Continue env/config/PATH-only QEMU discovery: rejected for standard UX and CI
   reproducibility.
 - Add TCG fallback: rejected by D005.
+
+### D024: Windows direct mounts use SMB/CIFS
+
+- Status: Accepted
+- Date: 2026-07-06
+- Related area: storage | network | security
+
+#### Context
+
+The Windows MVP intentionally used snapshot mount imports and rejected direct
+`:rw` host mounts. Follow-up planning now requires macOS-like direct mount
+semantics on Windows without changing the public CLI, Rust SDK, or Node API
+shape, and without using QEMU convenience networking as product policy.
+
+#### Decision
+
+Windows direct directory mounts use SMB/CIFS. CLI no-suffix mounts and CLI
+`:ro` mounts remain overlay snapshot imports. CLI `:rw` mounts continue to map
+to direct mounts and still require `--allow-host-writes`; on Windows they will
+use SMB/CIFS and require an elevated Administrator shell. SDK and Node
+`Direct { flags: 0 }` map to read-write SMB direct mounts, and
+`Direct { flags: MS_RDONLY }` maps to read-only SMB direct mounts because the
+existing public API can already express those modes.
+
+LocalSandbox creates ephemeral Windows SMB shares, one ephemeral local Windows
+user per sandbox, generated SMB credentials, and reversible NTFS/share ACL
+grants. Direct mount source paths must pass recursive validation before sharing.
+SMB direct mounts use the LocalSandbox-controlled proxy path. If SMB is the only
+network need, LocalSandbox attaches a mount-only SMB proxy that allows only the
+guest SMB gateway flow and does not imply arbitrary outbound `allow_net`.
+
+Do not use QEMU user networking, QEMU user-mode SMB, `hostfwd`, TAP, bridge,
+NAT, or public listener paths for this feature. Do not enable SMB encryption by
+default. Do not add a new CLI direct-read-only syntax in the first
+implementation.
+
+#### Consequences
+
+- D011 is superseded for explicit Windows direct mounts once this feature is
+  implemented.
+- Public CLI, Rust SDK, and Node API shape remains unchanged.
+- Windows direct mounts require Administrator privileges and actionable
+  non-admin preflight errors.
+- Default Windows sandboxes still use `-nic none` when no explicit networking
+  or direct SMB mount is requested.
+- SMB credentials and generated resource identifiers require strict redaction,
+  cleanup, and diagnostic rules.
+- Kernel/rootfs work must add CIFS client support and `mount.cifs` before the
+  SMB host lifecycle can be usable.
+
+#### Alternatives considered
+
+- Keep direct `:rw` unsupported: rejected because the approved follow-up goal is
+  macOS-like direct semantics on Windows.
+- QEMU user-mode SMB, QEMU user networking, `hostfwd`, TAP, bridge, NAT, or
+  public listeners: rejected because they bypass or confuse LocalSandbox policy
+  boundaries.
+- VirtioFS or 9p as the first direct-mount path: rejected for this feature due
+  to Windows host packaging, privilege, and semantic uncertainty.
+- New CLI syntax for direct read-only mounts: rejected for the first
+  implementation to preserve public CLI shape.
