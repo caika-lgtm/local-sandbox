@@ -549,23 +549,58 @@ fn run_command_inner(
         }
     }
 
-    let exit_code = if should_use_interactive_shell(std::io::stdin().is_terminal()) {
-        sandbox.shell(command, &env)?
+    let command_result = if should_use_interactive_shell(std::io::stdin().is_terminal()) {
+        sandbox.shell(command, &env)
     } else {
         sandbox.exec_with_env(
             command,
             &env,
             &mut std::io::stdout(),
             &mut std::io::stderr(),
-        )?
+        )
     };
 
-    if sync_before_stop {
-        sandbox.exec(&["sync"], &mut std::io::sink(), &mut std::io::sink())?;
+    let sync_result = if sync_before_stop && command_result.is_ok() {
+        sandbox
+            .exec(&["sync"], &mut std::io::sink(), &mut std::io::sink())
+            .map(|_| ())
+    } else {
+        Ok(())
+    };
+
+    let stop_result = sandbox.stop();
+    drop(proxy_handle);
+
+    let exit_code = match command_result {
+        Ok(exit_code) => exit_code,
+        Err(error) => {
+            if let Err(stop_error) = stop_result {
+                eprintln!(
+                    "lsb: warning: failed to stop VM cleanly after command error: {stop_error}"
+                );
+            }
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = sync_result {
+        if let Err(stop_error) = stop_result {
+            return Err(error).context(format!(
+                "failed to sync guest before stop; additionally failed to stop VM: {stop_error}"
+            ));
+        }
+        return Err(error).context("failed to sync guest before stop");
     }
 
-    drop(proxy_handle);
-    let _ = sandbox.stop();
+    if let Err(error) = stop_result {
+        if exit_code == 0 {
+            return Err(error).context("failed to stop VM after guest command");
+        }
+        eprintln!(
+            "lsb: warning: failed to stop VM cleanly after guest command exit {exit_code}: {error}"
+        );
+    }
+
     Ok(RunResult {
         exit_code,
         nbd_handle,

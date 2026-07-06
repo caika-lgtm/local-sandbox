@@ -98,6 +98,7 @@ pub enum WindowsSmbLifecyclePhase {
     UserNetworkLogonGrant,
     UserNetworkLogonRevoke,
     CleanupManifest,
+    InstanceLock,
     SmbLoopbackPreflight,
     SmbPolicyPreflight,
 }
@@ -119,6 +120,7 @@ impl WindowsSmbLifecyclePhase {
             Self::UserNetworkLogonGrant => "network logon right grant",
             Self::UserNetworkLogonRevoke => "network logon right revoke",
             Self::CleanupManifest => "cleanup manifest",
+            Self::InstanceLock => "instance lock",
             Self::SmbLoopbackPreflight => "SMB loopback preflight",
             Self::SmbPolicyPreflight => "SMB policy preflight",
         }

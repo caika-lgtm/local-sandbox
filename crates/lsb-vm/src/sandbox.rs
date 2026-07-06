@@ -31,8 +31,8 @@ use lsb_platform::terminal;
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use lsb_platform::windows_x86_64::fs::smb::{
     remove_windows_smb_cleanup_manifest, windows_smb_cleanup_manifest_path,
-    write_windows_smb_cleanup_manifest, WindowsSmbActiveResources, WindowsSmbLifecycleConfig,
-    WindowsSmbLifecycleManager, WindowsSmbMount,
+    write_windows_smb_cleanup_manifest, WindowsSmbActiveResources, WindowsSmbInstanceGuard,
+    WindowsSmbLifecycleConfig, WindowsSmbLifecycleManager, WindowsSmbMount,
 };
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 use lsb_platform::windows_x86_64::fs::{
@@ -258,6 +258,8 @@ impl VmConfigBuilder {
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_resources: Mutex::new(None),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_instance_guard: Mutex::new(None),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_instance_id,
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_cleanup_manifest_path,
@@ -280,6 +282,8 @@ pub struct Sandbox {
     windows_smb_mounts: Mutex<Vec<WindowsSmbMount>>,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     windows_smb_resources: Mutex<Option<WindowsSmbActiveResources>>,
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    windows_smb_instance_guard: Mutex<Option<WindowsSmbInstanceGuard>>,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     windows_smb_instance_id: String,
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -476,24 +480,31 @@ impl Sandbox {
                 }
             };
             if !resp.ok {
-                let (source, target) = match req {
-                    MountRequest::Overlay { source, target } => (source.clone(), target.as_str()),
+                let error = resp.error.unwrap_or_else(|| "unknown error".into());
+                let (source, target, error) = match req {
+                    MountRequest::Overlay { source, target } => {
+                        (source.clone(), target.as_str(), error)
+                    }
                     MountRequest::Direct { source, target, .. } => {
-                        (source.clone(), target.as_str())
+                        (source.clone(), target.as_str(), error)
                     }
                     MountRequest::Smb {
-                        server,
                         share,
                         target,
+                        username,
+                        password,
                         ..
-                    } => (format!("//{server}/{share}"), target.as_str()),
+                    } => {
+                        let error =
+                            sanitize_smb_mount_failure_message(error, share, username, password);
+                        (
+                            "Windows SMB direct mount".to_string(),
+                            target.as_str(),
+                            error,
+                        )
+                    }
                 };
-                bail!(
-                    "mount failed: {} -> {}: {}",
-                    source,
-                    target,
-                    resp.error.unwrap_or_else(|| "unknown error".into())
-                );
+                bail!("mount failed: {} -> {}: {}", source, target, error);
             }
         }
         mounts.clear();
@@ -1552,6 +1563,30 @@ impl Sandbox {
         {
             bail!("Windows SMB mount resources are already active; stop the sandbox before starting it again");
         }
+        if self
+            .windows_smb_instance_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB instance lock poisoned"))?
+            .is_some()
+        {
+            bail!("Windows SMB mount instance lock is already active; stop the sandbox before starting it again");
+        }
+
+        let instance_dir = self
+            .windows_smb_cleanup_manifest_path
+            .parent()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Windows SMB cleanup manifest path '{}' has no instance directory",
+                    self.windows_smb_cleanup_manifest_path.display()
+                )
+            })?;
+        let guard = WindowsSmbInstanceGuard::acquire(instance_dir).with_context(|| {
+            format!(
+                "acquiring Windows SMB instance lock for '{}'",
+                instance_dir.display()
+            )
+        })?;
 
         let mut refreshed_mounts = Vec::with_capacity(mounts.len());
         for mount in &mounts {
@@ -1607,6 +1642,10 @@ impl Sandbox {
             .windows_smb_resources
             .lock()
             .map_err(|_| anyhow::anyhow!("Windows SMB resource lock poisoned"))? = Some(resources);
+        *self
+            .windows_smb_instance_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB instance lock poisoned"))? = Some(guard);
 
         Ok(())
     }
@@ -1621,12 +1660,20 @@ impl Sandbox {
             .map_err(|_| anyhow::anyhow!("Windows SMB resource lock poisoned"))?
             .take();
         let Some(resources) = resources else {
+            self.release_windows_smb_instance_guard()?;
             return Ok(());
         };
 
         let mut manager = WindowsSmbLifecycleManager::native();
-        manager.cleanup(resources)?;
-        remove_windows_smb_cleanup_manifest(&self.windows_smb_cleanup_manifest_path)?;
+        let cleanup_result = manager.cleanup(resources);
+        if let Err(error) = cleanup_result {
+            self.release_windows_smb_instance_guard()?;
+            return Err(error.into());
+        }
+        let manifest_result =
+            remove_windows_smb_cleanup_manifest(&self.windows_smb_cleanup_manifest_path);
+        self.release_windows_smb_instance_guard()?;
+        manifest_result?;
         Ok(())
     }
 
@@ -1644,6 +1691,17 @@ impl Sandbox {
             .lock()
             .map_err(|_| anyhow::anyhow!("mount request lock poisoned"))?;
         mounts.retain(|request| !matches!(request, MountRequest::Smb { .. }));
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn release_windows_smb_instance_guard(&self) -> Result<()> {
+        let guard = self
+            .windows_smb_instance_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Windows SMB instance lock poisoned"))?
+            .take();
+        drop(guard);
         Ok(())
     }
 
@@ -1719,6 +1777,20 @@ impl Sandbox {
         }
         result
     }
+}
+
+fn sanitize_smb_mount_failure_message(
+    mut message: String,
+    share: &str,
+    username: &str,
+    password: &str,
+) -> String {
+    for sensitive in [share, username, password] {
+        if !sensitive.is_empty() {
+            message = message.replace(sensitive, "<redacted>");
+        }
+    }
+    message
 }
 
 fn build_exec_request(
@@ -2322,6 +2394,8 @@ mod tests {
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_resources: Mutex::new(None),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            windows_smb_instance_guard: Mutex::new(None),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_instance_id: "test-instance".to_string(),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             windows_smb_cleanup_manifest_path: temp_dir("test-instance")
@@ -2527,6 +2601,54 @@ mod tests {
             MountRequest::Overlay { source, target }
                 if source == "mount0" && target == "/workspace"
         ));
+    }
+
+    #[test]
+    fn send_mount_requests_redacts_smb_source_on_mount_failure() {
+        let request = MountRequest::Smb {
+            server: "localhost".into(),
+            share: "lsb-secretinstance-m0-deadbeef".into(),
+            target: "/workspace".into(),
+            username: "lsb_123456789abc".into(),
+            password: "SecretPassword123!".into(),
+            domain: "WINHOST".into(),
+            read_only: false,
+            uid: 0,
+            gid: 0,
+            file_mode: 0o666,
+            dir_mode: 0o777,
+            options: Vec::new(),
+        };
+        let sandbox = sandbox_with_mount_requests(vec![request]);
+        let mut writer = Vec::new();
+        let mut reader_payload = Vec::new();
+        frame::send_json(
+            &mut reader_payload,
+            frame::MOUNT_RESP,
+            &MountResponse {
+                source: "//localhost/lsb-secretinstance-m0-deadbeef".into(),
+                target: "/workspace".into(),
+                ok: false,
+                error: Some(
+                    "mount.cifs exited with status 32 for lsb-secretinstance-m0-deadbeef as lsb_123456789abc using SecretPassword123!".into(),
+                ),
+            },
+        )
+        .expect("mount response should encode");
+        let mut reader = Cursor::new(reader_payload);
+
+        let err = sandbox
+            .send_mount_requests(&mut writer, &mut reader)
+            .expect_err("SMB mount failure should fail");
+        let message = err.to_string();
+
+        assert!(message.contains("Windows SMB direct mount -> /workspace"));
+        assert!(message.contains("mount.cifs exited with status 32"));
+        assert!(message.contains("<redacted>"));
+        assert!(!message.contains("lsb-secretinstance-m0-deadbeef"));
+        assert!(!message.contains("lsb_123456789abc"));
+        assert!(!message.contains("SecretPassword123!"));
+        assert!(!message.contains("//localhost"));
     }
 
     #[test]

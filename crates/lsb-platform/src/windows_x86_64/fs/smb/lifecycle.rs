@@ -19,6 +19,49 @@ use super::types::{
 use super::user::{WindowsSmbUserAccount, WindowsSmbUserManager, WindowsSmbUserName};
 
 pub const WINDOWS_SMB_CLEANUP_MANIFEST_FILE: &str = "windows-smb-cleanup.json";
+pub const WINDOWS_SMB_INSTANCE_LOCK_FILE: &str = "windows-smb-active.lock";
+
+#[cfg(windows)]
+pub struct WindowsSmbInstanceGuard {
+    path: PathBuf,
+    file: Option<fs::File>,
+}
+
+#[cfg(windows)]
+impl WindowsSmbInstanceGuard {
+    pub fn acquire(instance_dir: &Path) -> Result<Self, WindowsSmbLifecycleError> {
+        try_acquire_windows_smb_instance_guard(instance_dir)?.ok_or_else(|| {
+            WindowsSmbLifecycleError::operation_failed(
+                WindowsSmbLifecyclePhase::InstanceLock,
+                format!(
+                    "instance directory '{}' is active in another LocalSandbox process",
+                    instance_dir.display()
+                ),
+            )
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for WindowsSmbInstanceGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WindowsSmbInstanceGuard")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsSmbInstanceGuard {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 pub struct WindowsSmbLifecycleManager<A, P, U, L, S> {
     admin: A,
@@ -185,6 +228,7 @@ where
 pub struct WindowsSmbRecoveryReport {
     pub attempted: usize,
     pub recovered: usize,
+    pub skipped_live: usize,
     pub failures: Vec<WindowsSmbCleanupFailure>,
 }
 
@@ -448,6 +492,93 @@ pub fn windows_smb_cleanup_manifest_path(instance_dir: &Path) -> PathBuf {
     instance_dir.join(WINDOWS_SMB_CLEANUP_MANIFEST_FILE)
 }
 
+pub fn windows_smb_instance_lock_path(instance_dir: &Path) -> PathBuf {
+    instance_dir.join(WINDOWS_SMB_INSTANCE_LOCK_FILE)
+}
+
+#[cfg(windows)]
+fn try_acquire_windows_smb_instance_guard(
+    instance_dir: &Path,
+) -> Result<Option<WindowsSmbInstanceGuard>, WindowsSmbLifecycleError> {
+    use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    fs::create_dir_all(instance_dir).map_err(|error| {
+        WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::InstanceLock,
+            format!(
+                "failed to create instance lock directory '{}': {error}",
+                instance_dir.display()
+            ),
+        )
+    })?;
+
+    let path = windows_smb_instance_lock_path(instance_dir);
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if is_windows_lock_held(&error) => return Ok(None),
+        Err(error) => {
+            return Err(WindowsSmbLifecycleError::operation_failed(
+                WindowsSmbLifecyclePhase::InstanceLock,
+                format!(
+                    "failed to acquire instance lock '{}': {error}",
+                    path.display()
+                ),
+            ));
+        }
+    };
+
+    file.set_len(0).map_err(|error| {
+        WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::InstanceLock,
+            format!(
+                "failed to reset instance lock '{}': {error}",
+                path.display()
+            ),
+        )
+    })?;
+    write!(file, "pid={}\n", std::process::id()).map_err(|error| {
+        WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::InstanceLock,
+            format!(
+                "failed to write instance lock '{}': {error}",
+                path.display()
+            ),
+        )
+    })?;
+    file.sync_data().map_err(|error| {
+        WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::InstanceLock,
+            format!(
+                "failed to flush instance lock '{}': {error}",
+                path.display()
+            ),
+        )
+    })?;
+
+    Ok(Some(WindowsSmbInstanceGuard {
+        path,
+        file: Some(file),
+    }))
+}
+
+#[cfg(windows)]
+fn is_windows_lock_held(error: &std::io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    matches!(
+        error.raw_os_error(),
+        Some(ERROR_SHARING_VIOLATION) | Some(ERROR_LOCK_VIOLATION)
+    )
+}
+
 #[cfg(windows)]
 pub fn recover_stale_windows_smb_cleanup_manifests(
     instances_dir: &Path,
@@ -469,6 +600,22 @@ pub fn recover_stale_windows_smb_cleanup_manifests(
         if !manifest_path.is_file() {
             continue;
         }
+
+        let instance_dir = entry.path();
+        let _guard = match try_acquire_windows_smb_instance_guard(&instance_dir) {
+            Ok(Some(guard)) => guard,
+            Ok(None) => {
+                report.skipped_live += 1;
+                continue;
+            }
+            Err(error) => {
+                report.failures.push(WindowsSmbCleanupFailure::new(
+                    WindowsSmbLifecyclePhase::InstanceLock,
+                    error.to_string(),
+                ));
+                continue;
+            }
+        };
 
         report.attempted += 1;
         let mut manager = WindowsSmbLifecycleManager::native();
@@ -1037,6 +1184,31 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
         drop(resources);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stale_recovery_skips_manifest_when_instance_lock_is_held() {
+        let root = temp_dir("locked-stale-recovery");
+        let instance = root.join("live-instance");
+        std::fs::create_dir_all(&instance).expect("instance dir");
+        let manifest_path = windows_smb_cleanup_manifest_path(&instance);
+        std::fs::write(&manifest_path, b"not valid json").expect("manifest fixture");
+        let guard = WindowsSmbInstanceGuard::acquire(&instance).expect("instance lock");
+
+        let report = recover_stale_windows_smb_cleanup_manifests(&root);
+
+        assert_eq!(report.attempted, 0);
+        assert_eq!(report.recovered, 0);
+        assert_eq!(report.skipped_live, 1);
+        assert!(report.failures.is_empty());
+        assert!(
+            manifest_path.exists(),
+            "live manifest should remain for the owning sandbox stop path"
+        );
+
+        drop(guard);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

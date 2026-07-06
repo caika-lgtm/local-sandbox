@@ -780,12 +780,9 @@ mod guest {
         let (source, target) = match req {
             MountRequest::Overlay { source, target } => (source.clone(), target.as_str()),
             MountRequest::Direct { source, target, .. } => (source.clone(), target.as_str()),
-            MountRequest::Smb {
-                server,
-                share,
-                target,
-                ..
-            } => (smb_mount::service_path(server, share), target.as_str()),
+            MountRequest::Smb { target, .. } => {
+                ("Windows SMB direct mount".to_string(), target.as_str())
+            }
         };
 
         if let Err(e) = std::fs::create_dir_all(target) {

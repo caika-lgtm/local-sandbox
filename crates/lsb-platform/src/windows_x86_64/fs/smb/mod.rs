@@ -15,11 +15,14 @@ pub use admin::NativeWindowsSmbAdmin;
 pub use admin::WindowsSmbAdmin;
 #[cfg(windows)]
 pub use lifecycle::recover_stale_windows_smb_cleanup_manifests;
+#[cfg(windows)]
+pub use lifecycle::WindowsSmbInstanceGuard;
 pub use lifecycle::{
     read_windows_smb_cleanup_manifest, remove_windows_smb_cleanup_manifest,
-    windows_smb_cleanup_manifest_path, write_windows_smb_cleanup_manifest,
-    WindowsSmbActiveResources, WindowsSmbCleanupManifest, WindowsSmbLifecycleManager,
-    WindowsSmbRecoveryReport, WINDOWS_SMB_CLEANUP_MANIFEST_FILE,
+    windows_smb_cleanup_manifest_path, windows_smb_instance_lock_path,
+    write_windows_smb_cleanup_manifest, WindowsSmbActiveResources, WindowsSmbCleanupManifest,
+    WindowsSmbLifecycleManager, WindowsSmbRecoveryReport, WINDOWS_SMB_CLEANUP_MANIFEST_FILE,
+    WINDOWS_SMB_INSTANCE_LOCK_FILE,
 };
 pub use password::{
     NativeWindowsSmbPasswordGenerator, WindowsSmbPassword, WindowsSmbPasswordGenerator,
