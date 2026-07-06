@@ -1,0 +1,44 @@
+README.md
+  s_5a68fe34807142::t_f446d63826571f 3-4,6-9,13-19,23-24,29-33,40-45,49,52,65-80,89-94,110-112,131-135,208-210
+AGENTS.md
+  s_5a68fe34807142::t_f446d63826571f 5,25
+skills/lsb/SKILL.md
+  s_5a68fe34807142::t_f446d63826571f 3,8,46,122,184,186-188
+crates/lsb-platform/src/windows_x86_64/qemu/boot.rs
+  s_5a68fe34807142::t_dd7bdb9ff04784 135
+  s_5a68fe34807142::t_d0425ca99f1b65 122,728,767-770,815
+crates/lsb-platform/src/windows_x86_64/control/virtio_serial.rs
+  s_5a68fe34807142::t_f446d63826571f 65,87,96,123,146,179
+skills/lsb/references/checkpoints.md
+  s_5a68fe34807142::t_f446d63826571f 3,17,25,44
+crates/lsb-platform/src/windows_x86_64/qemu/argv.rs
+  s_5a68fe34807142::t_6d742ed3c4ff01 22
+skills/lsb/references/networking.md
+  s_5a68fe34807142::t_f446d63826571f 64
+install.sh
+  s_5a68fe34807142::t_f446d63826571f 13-14
+CHANGELOG.md
+  s_5a68fe34807142::t_f446d63826571f 5-20
+crates/lsb-platform/src/windows_x86_64/qemu/config.rs
+  s_5a68fe34807142::t_6d742ed3c4ff01 10,12,192,200,232,240,249,256
+crates/lsb-platform/src/windows_x86_64/qemu/discovery.rs
+  s_5a68fe34807142::t_6d742ed3c4ff01 94
+crates/lsb-platform/src/windows_x86_64/qemu/process.rs
+  s_5a68fe34807142::t_dd7bdb9ff04784 127,138,224,437,442,447,456,556,602
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0942bd43b2bc5acddbf93608d8dc9aca8da1f01e",
+  "prompts": {},
+  "sessions": {
+    "s_5a68fe34807142": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f35f1-01c4-7183-81c0-e470701cd9c5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
