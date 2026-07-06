@@ -330,6 +330,19 @@ function Assert-NotContains {
   }
 }
 
+function Set-Utf8NoBomText {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Value
+  )
+
+  $encoding = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
 function Get-FreeLoopbackPort {
   $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse("127.0.0.1"), 0)
   $listener.Start()
@@ -539,8 +552,8 @@ function Test-MountWorkflow {
 
   $projectDir = Join-Path $script:WorkspaceRoot "project"
   New-Item -ItemType Directory -Force -Path (Join-Path $projectDir "src") | Out-Null
-  Set-Content -LiteralPath (Join-Path $projectDir "input.txt") -Value "host-input"
-  Set-Content -LiteralPath (Join-Path $projectDir "src\module.txt") -Value "nested-host-input"
+  Set-Utf8NoBomText -Path (Join-Path $projectDir "input.txt") -Value "host-input"
+  Set-Utf8NoBomText -Path (Join-Path $projectDir "src\module.txt") -Value "nested-host-input"
 
   $mountSpec = "${projectDir}:/workspace"
   $mountScript = 'set -eu; test "$(cat /workspace/input.txt)" = "host-input"; test "$(cat /workspace/src/module.txt)" = "nested-host-input"; mkdir -p /workspace/out; printf "guest-output" > /workspace/out/result.txt; printf "mount-isolated-ok\n"'
