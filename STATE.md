@@ -5,22 +5,23 @@ and validation results synchronized while implementing `PLAN.md`.
 
 ## Current Status
 
-- Overall status: Slice 4 CLI/SDK/QEMU attachment integration implemented;
-  scoped validation passing
+- Overall status: Slice 5 Windows SMB host lifecycle implemented; scoped
+  validation passing
 - Current owner: Codex
 - Current branch: codex/lsb-direct-mnt
 - Last updated: 2026-07-06
-- Latest validated commit: 9ab5fa9 plus uncommitted Slice 4 integration edits
+- Latest validated commit: 9ab5fa9 plus uncommitted Slice 5 lifecycle edits
 
 ## Active Focus
 
-- Current task: Slice 4 CLI/SDK/QEMU attachment integration
-- Relevant files: `crates/lsb-cli/src/vm.rs`,
-  `crates/lsb-sdk/src/runtime.rs`,
-  `crates/lsb-platform/src/windows_x86_64/qemu/argv.rs`,
+- Current task: Slice 5 Windows SMB host lifecycle
+- Relevant files: `crates/lsb-platform/src/windows_x86_64/fs/smb/`,
+  `crates/lsb-platform/src/windows_x86_64/fs/mod.rs`,
+  `crates/lsb-platform/Cargo.toml`,
   `STATE.md`
-- Immediate next step: Begin Slice 5 Windows SMB host lifecycle after review.
-- Blockers: None for Slice 4.
+- Immediate next step: Begin Slice 6 mount planning and sandbox lifecycle
+  integration after review.
+- Blockers: None for Slice 5.
 
 ## Maintainer Decisions
 
@@ -53,19 +54,19 @@ and validation results synchronized while implementing `PLAN.md`.
 - [x] Preserve Node API shape and direct flag mapping.
 - [ ] Add Windows direct SMB mount planning.
 - [ ] Add recursive direct path validation.
-- [ ] Add Windows admin preflight.
-- [ ] Add ephemeral user manager.
-- [ ] Add generated password wrapper and redaction.
-- [ ] Add NTFS ACL grant/revoke manager.
-- [ ] Add temporary SMB share manager.
-- [ ] Add SMB lifecycle setup/cleanup guard.
+- [x] Add Windows admin preflight.
+- [x] Add ephemeral user manager.
+- [x] Add generated password wrapper and redaction.
+- [x] Add NTFS ACL grant/revoke manager.
+- [x] Add temporary SMB share manager.
+- [x] Add SMB lifecycle setup/cleanup guard.
 - [ ] Wire SMB lifecycle into `Sandbox::start`.
 - [ ] Wire cleanup into `Sandbox::stop`.
 - [ ] Add stale cleanup manifest/recovery.
 - [x] Add QEMU argv golden tests.
 - [x] Add proxy policy tests.
 - [ ] Add guest mount tests.
-- [ ] Add Windows unit tests.
+- [x] Add Windows unit tests.
 - [ ] Add Windows WHPX smoke tests.
 - [ ] Update user-facing docs after validation.
 
@@ -79,6 +80,7 @@ and validation results synchronized while implementing `PLAN.md`.
 | 2026-07-06 | 0febf44 + working tree | `cargo fmt --check`; `cargo check --workspace`; `cargo test -p lsb-vm` | Pass | Minimal `lsb-vm` exhaustiveness update restored workspace compilation without SMB lifecycle/startup behavior. |
 | 2026-07-06 | 0febf44 + working tree | `cargo fmt --check`; `cargo test -p lsb-proxy`; `git diff --check` | Pass | Slice 3 proxy policy tests cover mount-only SMB relay, arbitrary TCP/DNS denial, no secret substitutions in mount-only mode, and combined network-plus-SMB behavior. |
 | 2026-07-06 | 9ab5fa9 + working tree | `cargo fmt --all -- --check`; `cargo test -p lsb-cli`; `cargo test -p lsb-sdk`; `cargo test -p lsb-platform windows_x86_64::qemu::argv::tests`; `cargo test -p lsb-platform windows_x86_64::network::tests`; `cargo check --workspace`; `git diff --check` | Pass | Slice 4 CLI/SDK tests cover mount-only SMB proxy selection, combined allow-net plus SMB relay, CLI `:ro` overlay parsing, and no-direct unchanged behavior. QEMU/network tests cover default `-nic none`, QEMU stream netdev attachment, loopback-only endpoints, and no user networking/hostfwd/TAP/bridge/NAT tokens. |
+| 2026-07-06 | 9ab5fa9 + working tree | `cargo fmt --all -- --check`; `cargo test -p lsb-platform windows_x86_64::fs::smb`; `cargo test -p lsb-platform`; `cargo check -p lsb-platform --target x86_64-pc-windows-msvc`; `cargo check --workspace`; `git diff --check` | Pass | Slice 5 fake-manager tests cover success, admin failure, partial ACL/share failure cleanup, cleanup continuing after failures, name limits, password policy, and redaction. Windows target check covers native admin/user/share/ACL API adapters. |
 
 ## Open Blockers
 
@@ -118,6 +120,9 @@ artifacts unless they are intentionally checked in.
 | `crates/lsb-cli/src/vm.rs` | Updated | Detects Windows direct mounts and selects mount-only SMB proxy config when `allow_net` is false, or merges SMB relay into the normal proxy when `allow_net` is true; CLI `:ro` remains overlay. |
 | `crates/lsb-sdk/src/runtime.rs` | Updated | Mirrors CLI proxy selection for SDK/Node callers without changing `SandboxConfig` or mount API shape. |
 | `crates/lsb-platform/src/windows_x86_64/qemu/argv.rs` | Updated | Extended stream-network argv assertions to exclude `-nic`, QEMU user networking, `hostfwd`, TAP, bridge, and NAT tokens. |
+| `crates/lsb-platform/Cargo.toml` | Updated | Added Windows API feature gates required by native SMB admin, user, share, and ACL adapters. |
+| `crates/lsb-platform/src/windows_x86_64/fs/mod.rs` | Updated | Exposes the Windows SMB lifecycle module under the Windows fs namespace. |
+| `crates/lsb-platform/src/windows_x86_64/fs/smb/` | Added | Implements fakeable SMB admin/password/user/ACL/share components, native Windows adapters, lifecycle setup/cleanup, mount request generation, name validation, password redaction, and unit tests. |
 
 ## Cleanup/Redaction Audit
 

@@ -1,5 +1,6 @@
 mod copy;
 mod mount_plan;
+pub mod smb;
 
 pub use copy::{
     join_guest_child, plan_copy_in, validate_copy_out_destination, validate_guest_absolute_path,
