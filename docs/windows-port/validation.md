@@ -73,6 +73,11 @@ The `smoke` and `e2e` lanes use a persistent boot asset cache under
 `C:\lsb-assets\by-key\<asset-key>\`. QEMU boots only a disposable per-run copy
 under `C:\lsb-assets\work\<run-id>-<attempt>\`.
 
+For normal Windows development, use released runtime assets downloaded by
+`lsb init`. Building `windows-x86_64` runtime assets with `prepare-rootfs` is an
+advanced Docker/Linux-hosted path; it is not the recommended local Windows
+workflow.
+
 If the local Windows cache is missing, the workflow prepares `windows-x86_64`
 boot assets on a hosted Linux job, uploads them as a same-run artifact, hydrates
 the Windows cache, then creates the disposable rootfs copy.

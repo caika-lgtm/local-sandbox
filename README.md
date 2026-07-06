@@ -46,9 +46,18 @@ codesign --entitlements lsb.entitlements --force -s - target/release/lsb
 
 Build the Windows CLI from source:
 
-```sh
+```powershell
 cargo build -p lsb-cli --release
+target\release\lsb.exe init
 ```
+
+`cargo build` only builds the CLI. Runtime assets are downloaded separately by
+`lsb init` and include `Image`, `initramfs.cpio.gz`, and `rootfs.ext4`.
+Windows uses its own released runtime asset package because the QEMU/WHPX guest
+path requires Windows-specific support such as virtio-serial. Building those
+assets from source on Windows is more involved; developers should normally
+download the released runtime assets instead of running the rootfs preparation
+pipeline locally.
 
 ## Usage
 

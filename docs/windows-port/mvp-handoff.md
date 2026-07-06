@@ -9,7 +9,7 @@ using QEMU with WHPX. The implementation keeps the existing Linux guest model
 and public LocalSandbox API shape while replacing the macOS Apple
 Virtualization.framework backend with a supervised QEMU process. Release
 packaging now includes Windows x64 CLI install artifacts and the Windows x64
-Node package.
+Node package, plus Windows x64 runtime assets for the QEMU/WHPX guest path.
 
 This handoff replaces the completed sprint workspace and milestone prompt files.
 It is the current status source for future agents.
@@ -21,7 +21,7 @@ It is the current status source for future agents.
 | Host target | Windows 11 x64. Windows ARM64 is future work. |
 | VM backend | QEMU direct Linux boot with `-accel whpx`, `-cpu Westmere`, explicit devices, no display, no default NIC, and Windows Job Object cleanup. |
 | QEMU discovery | `LSB_QEMU`, internal config hook, then `PATH`; structured preflight errors for missing QEMU, invalid paths, version parse, and missing WHPX support. |
-| Boot assets | Existing `Image`, `initramfs.cpio.gz`, and rootfs assets are used. Self-hosted CI prepares disposable per-run rootfs copies. |
+| Boot assets | Released Windows x64 runtime assets provide `Image`, `initramfs.cpio.gz`, and `rootfs.ext4` with the QEMU/WHPX guest requirements such as virtio-serial. Developers should use `lsb init`; self-hosted CI hydrates/caches assets and prepares disposable per-run rootfs copies. |
 | Control transport | `lsb-proto` over virtio-serial through private QEMU pipe chardevs. The host connects during boot because QEMU pipe chardev startup can block until a client connects. |
 | Readiness | Windows startup succeeds only after a valid LocalSandbox `GuestReady` frame over the established control stream. |
 | Exec | Non-interactive `exec` works through the existing product API and returns stdout, stderr, and exit status. |

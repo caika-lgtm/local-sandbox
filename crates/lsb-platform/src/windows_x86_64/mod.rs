@@ -21,7 +21,7 @@ pub const SPEC: PlatformSpec = PlatformSpec {
     target_arch: "x86_64",
     host_target: "x86_64-pc-windows-msvc",
     cli_artifact_suffix: "windows-x86_64",
-    os_image_artifact_suffix: "x86_64",
+    os_image_artifact_suffix: "windows-x86_64",
     guest_target: "x86_64-unknown-linux-musl",
     docker_platform: "linux/amd64",
     kernel_arch: "x86",

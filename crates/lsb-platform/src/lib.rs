@@ -469,6 +469,14 @@ mod tests {
             spec.cli_tarball_name("0.5.2"),
             "lsb-v0.5.2-windows-x86_64.tar.gz"
         );
+        assert_eq!(
+            spec.os_image_tarball_name("0.5.2"),
+            "lsb-os-v0.5.2-windows-x86_64.tar.gz"
+        );
+        assert_eq!(
+            spec.os_image_tarball_name("v0.5.2"),
+            "lsb-os-v0.5.2-windows-x86_64.tar.gz"
+        );
         assert_eq!(spec.cli_binary_name(), "lsb.exe");
     }
 

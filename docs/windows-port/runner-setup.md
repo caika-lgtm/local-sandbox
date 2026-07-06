@@ -77,6 +77,11 @@ manual `workflow_dispatch` runs:
 The `check` and `unit` lanes run only on the self-hosted Windows runner and do
 not prepare boot assets.
 
+For local runner maintenance and manual Windows development, prefer released
+runtime assets from `lsb init`. Building runtime assets with `prepare-rootfs` is
+kept as an advanced hosted-Linux/Docker path because creating the rootfs,
+kernel, and initramfs directly on Windows is complicated.
+
 The `smoke` and `e2e` lanes first probe the local Windows boot asset cache. On
 cache hit, they reuse pristine cached assets and boot only a disposable rootfs
 copy. On cache miss, a hosted Linux job prepares `windows-x86_64` assets, uploads

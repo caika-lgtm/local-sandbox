@@ -32,8 +32,16 @@ build: build-guest build-cli codesign
 
 # Prepare the rootfs, kernel, and initramfs (requires Docker).
 # Set LSB_PLATFORM=<platform-id> to override the host default.
+# Advanced source-build path. On Windows, prefer `just init-runtime-assets`.
 prepare-rootfs:
     LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -p xtask -- prepare-rootfs
+
+# Pass extra init flags directly, for example:
+#   just init-runtime-assets --version 0.3.8 --force
+#
+# Download released runtime assets for the local CLI/platform.
+init-runtime-assets *args:
+    cargo run -p lsb-cli -- init {{ args }}
 
 # Run a command inside the VM
 run *args:
@@ -45,7 +53,10 @@ shell:
     @binary_name="$(LSB_PLATFORM="${LSB_PLATFORM:-}" cargo run -q -p xtask -- platform-meta --format env | sed -n 's/^LSB_CLI_BINARY=//p')"; \
     "target/debug/$binary_name" run -- sh
 
-# Full setup from scratch: rootfs + build
+# On Windows, building runtime assets locally is complicated; prefer
+# `just build-cli` followed by `just init-runtime-assets`.
+#
+# Full source setup from scratch: rootfs + build
 setup: prepare-rootfs build
 
 # Check all crates compile (host targets only)

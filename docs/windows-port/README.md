@@ -10,8 +10,16 @@ the existing Linux guest, uses virtio-serial for LocalSandbox control, supports
 non-interactive exec, guest file transfer, staged mount imports, host-to-guest
 port forwarding without a guest NIC, policy-mediated `--allow-net`, flattened
 qcow2 checkpoints, Windows x64 Node package metadata, and hosted/self-hosted CI
-coverage. The release path now includes a Windows x64 CLI artifact and native
-PowerShell installer while continuing to require a user-installed QEMU.
+coverage. The release path includes Windows x64 CLI and runtime asset artifacts
+plus a native PowerShell installer while continuing to require a user-installed
+QEMU.
+
+For normal Windows development, download released runtime assets with `lsb init`
+instead of building them locally. The Windows package contains `Image`,
+`initramfs.cpio.gz`, and `rootfs.ext4` built for the QEMU/WHPX path, including
+virtio-serial support. Source-building those assets remains possible through
+`xtask prepare-rootfs --platform windows-x86_64`, but it is Docker/Linux-hosted
+and more complicated than the recommended release download path.
 
 The MVP is complete for upstream review, but it is not a production-readiness
 certification. See `mvp-handoff.md` before planning follow-up work.
