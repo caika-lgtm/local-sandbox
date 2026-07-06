@@ -16,7 +16,7 @@
 - Windows production runs require WHPX. TCG fallback, QEMU user networking,
   `hostfwd`, TAP/bridge networking, direct writable host mounts, streaming
   `spawn`, interactive shells, `watch`, CAS/NBD checkpoint transport, Windows
-  ARM64, and public Windows CLI release/install remain unsupported in this MVP.
+  ARM64, and bundled QEMU installation remain unsupported in this MVP.
 
 ## 0.4.1
 

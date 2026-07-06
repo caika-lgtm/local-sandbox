@@ -501,7 +501,7 @@ fn run_command_inner(
         }
     }
 
-    let exit_code = if std::io::stdin().is_terminal() {
+    let exit_code = if should_use_interactive_shell(std::io::stdin().is_terminal()) {
         sandbox.shell(command, &env)?
     } else {
         sandbox.exec_with_env(
@@ -522,6 +522,15 @@ fn run_command_inner(
         exit_code,
         nbd_handle,
     })
+}
+
+fn should_use_interactive_shell(stdin_is_terminal: bool) -> bool {
+    cfg!(target_os = "macos") && stdin_is_terminal
+}
+
+#[cfg(test)]
+fn target_supports_interactive_shell() -> bool {
+    cfg!(target_os = "macos")
 }
 
 fn parse_mount_spec(s: &str) -> Result<MountConfig> {
@@ -731,6 +740,15 @@ mod tests {
     #[test]
     fn split_mount_spec_rejects_missing_guest_path() {
         assert!(split_mount_spec(r"C:\Users\me\project").is_err());
+    }
+
+    #[test]
+    fn interactive_shell_selection_is_platform_gated() {
+        assert_eq!(
+            should_use_interactive_shell(true),
+            target_supports_interactive_shell()
+        );
+        assert!(!should_use_interactive_shell(false));
     }
 
     #[test]

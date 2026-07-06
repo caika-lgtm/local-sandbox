@@ -204,6 +204,3 @@ if ($missingBootVars.Count -eq 0) {
 } else {
   Write-Warning "Skipping Windows Node binding, QEMU direct boot, guest exec, guest copy transfer, mount, port-forward, checkpoint/store, and network policy/proxy smokes. Set $($missingBootVars -join ', ') to disposable LocalSandbox boot asset paths."
 }
-
-# Later:
-# cargo run -p lsb-cli -- run --port 8080:8080 -- your-network-policy-test

@@ -147,11 +147,45 @@ pub fn supported_runtime_platform() -> Result<&'static PlatformSpec> {
 }
 
 pub fn default_data_dir() -> String {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let subdir = host_platform()
+    default_data_dir_with_env(host_platform(), |key| env::var(key).ok())
+}
+
+fn default_data_dir_with_env<F>(platform: Option<&PlatformSpec>, mut env_value: F) -> String
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    if platform.is_some_and(|platform| platform.target_os == "windows") {
+        if let Some(local_app_data) = env_nonempty(&mut env_value, "LOCALAPPDATA") {
+            return join_data_path(&local_app_data, "lsb");
+        }
+        if let Some(user_profile) = env_nonempty(&mut env_value, "USERPROFILE") {
+            return join_data_path(&user_profile, "AppData/Local/lsb");
+        }
+        if let Some(home) = env_nonempty(&mut env_value, "HOME") {
+            return join_data_path(&home, "AppData/Local/lsb");
+        }
+    }
+
+    let home = env_nonempty(&mut env_value, "HOME").unwrap_or_else(|| "/tmp".to_string());
+    let subdir = platform
         .map(|platform| platform.default_data_subdir)
         .unwrap_or(".local/share/lsb");
-    format!("{home}/{subdir}")
+    join_data_path(&home, subdir)
+}
+
+fn env_nonempty<F>(env_value: &mut F, key: &str) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    env_value(key).filter(|value| !value.is_empty())
+}
+
+fn join_data_path(base: &str, subdir: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches(['/', '\\']),
+        subdir.trim_start_matches(['/', '\\'])
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -436,6 +470,42 @@ mod tests {
             "lsb-v0.5.2-windows-x86_64.tar.gz"
         );
         assert_eq!(spec.cli_binary_name(), "lsb.exe");
+    }
+
+    #[test]
+    fn windows_default_data_dir_prefers_localappdata() {
+        let spec = platform_by_id("windows-x86_64");
+        let path = default_data_dir_with_env(spec, |key| match key {
+            "LOCALAPPDATA" => Some(r"C:\Users\me\AppData\Local".to_string()),
+            "USERPROFILE" => Some(r"C:\Users\me".to_string()),
+            "HOME" => Some("/home/me".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(path, r"C:\Users\me\AppData\Local/lsb");
+    }
+
+    #[test]
+    fn windows_default_data_dir_falls_back_to_userprofile() {
+        let spec = platform_by_id("windows-x86_64");
+        let path = default_data_dir_with_env(spec, |key| match key {
+            "USERPROFILE" => Some(r"C:\Users\me".to_string()),
+            "HOME" => Some("/home/me".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(path, r"C:\Users\me/AppData/Local/lsb");
+    }
+
+    #[test]
+    fn macos_default_data_dir_uses_home_subdir() {
+        let spec = platform_by_id("macos-aarch64");
+        let path = default_data_dir_with_env(spec, |key| match key {
+            "HOME" => Some("/Users/me".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(path, "/Users/me/.local/share/lsb");
     }
 
     #[test]

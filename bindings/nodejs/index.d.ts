@@ -10,7 +10,9 @@
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
  */
-export declare class ByteStream {}
+export declare class ByteStream {
+
+}
 
 /**
  * Running sandbox VM instance.
@@ -41,10 +43,7 @@ export declare class Sandbox {
    *
    * Usage: `const proc = await sandbox.spawn(['node', 'server.js'], { cwd: '/workspace' })`
    */
-  spawn(
-    command: string | Array<string>,
-    opts?: SpawnOptions | undefined | null,
-  ): Promise<SpawnedProcess>
+  spawn(command: string | Array<string>, opts?: SpawnOptions | undefined | null): Promise<SpawnedProcess>
   /**
    * Watch a guest path for file changes.
    *
@@ -179,16 +178,9 @@ export declare class SpawnedProcess {
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
  */
-export declare class WatchStream {}
+export declare class WatchStream {
 
-/**
- * Download or verify sandbox runtime assets such as kernel, rootfs, and initramfs.
- *
- * Usage: `await initSandbox({ dataDir, force: false })`
- */
-export declare function initSandbox(
-  opts?: SandboxInitOptions | undefined | null,
-): Promise<SandboxInitResult>
+}
 
 /** Options for copying files or directories. */
 export interface CopyOptions {
@@ -241,6 +233,13 @@ export interface FileChangeEvent {
   /** Event kind reported by the guest watcher. */
   event: string
 }
+
+/**
+ * Download or verify sandbox runtime assets such as kernel, rootfs, and initramfs.
+ *
+ * Usage: `await initSandbox({ dataDir, force: false })`
+ */
+export declare function initSandbox(opts?: SandboxInitOptions | undefined | null): Promise<SandboxInitResult>
 
 /** Options for directory creation. */
 export interface MkdirOptions {
@@ -304,7 +303,7 @@ export interface SandboxAssetPaths {
 
 /** Options used when initializing sandbox runtime assets. */
 export interface SandboxInitOptions {
-  /** Runtime data directory. Defaults to `~/.local/share/lsb`. */
+  /** Runtime data directory. Defaults to the platform runtime data directory. */
   dataDir?: string
   /** Runtime asset version to initialize and pin as a base image. Defaults to this package version. */
   version?: string
@@ -356,15 +355,15 @@ export interface StartOptions {
   diskSizeMb?: number
   /** Runtime data directory containing VM assets and instances. */
   dataDir?: string
-  /** Pinned base runtime asset version to boot from when `from` is not set. Defaults to the initialized VERSION in `dataDir`. */
+  /**
+   * Pinned base runtime asset version to boot from when `from` is not set.
+   * Defaults to the initialized VERSION in `dataDir`.
+   */
   baseVersion?: string
   /** Host-to-guest port forwards. */
   ports?: Array<PortMappingConfig>
   /** Directory mounts applied during boot. */
-  mounts?: Array<
-    | { type: 'overlay'; hostPath: string; guestPath: string }
-    | { type: 'direct'; hostPath: string; guestPath: string; flags: number }
-  >
+  mounts?: Array<{ type: 'overlay'; hostPath: string; guestPath: string } | { type: 'direct'; hostPath: string; guestPath: string; flags: number }>
   /** Network proxy, host exposure, and secret policy. */
   network?: NetworkConfig
 }

@@ -51,11 +51,10 @@ corepack yarn install
 ```ts
 import { Sandbox, initSandbox } from '@local-sandbox/lsb-nodejs'
 
-const dataDir = `${process.env.HOME}/.local/share/lsb`
-await initSandbox({ dataDir })
+const init = await initSandbox()
 
 const sandbox = await Sandbox.start({
-  dataDir,
+  dataDir: init.dataDir,
   cpus: 2,
   memoryMb: 2048,
   mounts: [{ type: 'overlay', hostPath: './src', guestPath: '/workspace' }],
@@ -245,8 +244,10 @@ corepack yarn test:signed-node
 `corepack yarn test` always builds the native binding first, then runs AVA against the
 generated root entrypoint. The positive VM smoke test only runs when both of these are true:
 
-- lsb runtime assets already exist in `~/.local/share/lsb` or in `LSB_NODEJS_TEST_DATA_DIR`
-  (`Image` is expected there and usually needs to be provisioned manually)
+- lsb runtime assets already exist in the platform default lsb data directory
+  (`~/.local/share/lsb` on macOS/Linux, `%LOCALAPPDATA%\lsb` on Windows) or in
+  `LSB_NODEJS_TEST_DATA_DIR` (`Image` is expected there and usually needs to be provisioned
+  manually)
 - the current `node` executable has the `com.apple.security.virtualization` entitlement
 
 To avoid modifying your global Node installation, use [`test:signed-node`](./package.json),

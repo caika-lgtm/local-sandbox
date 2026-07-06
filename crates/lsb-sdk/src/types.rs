@@ -8,7 +8,7 @@ use lsb_vm::MountConfig;
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
     /// Data directory containing kernel, rootfs, initramfs.
-    /// Defaults to `~/.local/share/lsb`.
+    /// Defaults to the platform runtime data directory.
     pub data_dir: Option<String>,
     /// Number of CPUs. Default: 2.
     pub cpus: usize,

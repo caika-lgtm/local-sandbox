@@ -97,7 +97,7 @@ pub struct StartOptions {
 #[allow(non_snake_case)]
 #[napi(object)]
 pub struct SandboxInitOptions {
-  /// Runtime data directory. Defaults to `~/.local/share/lsb`.
+  /// Runtime data directory. Defaults to the platform runtime data directory.
   pub dataDir: Option<String>,
   /// Runtime asset version to initialize and pin as a base image. Defaults to this package version.
   pub version: Option<String>,

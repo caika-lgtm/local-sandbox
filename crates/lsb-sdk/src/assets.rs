@@ -15,7 +15,7 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone, Default)]
 pub struct SandboxInitOptions {
     /// Runtime data directory containing kernel, rootfs, initramfs, checkpoints, and instances.
-    /// Defaults to `~/.local/share/lsb`.
+    /// Defaults to the platform runtime data directory.
     pub data_dir: Option<String>,
     /// Re-download assets even when the expected files and VERSION marker already exist.
     pub force: bool,

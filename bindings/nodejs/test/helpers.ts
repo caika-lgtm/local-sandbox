@@ -15,12 +15,20 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 
 export const projectRoot = join(testDir, '..')
 export const entrypointPath = join(projectRoot, 'index.js')
-export const defaultRuntimeDataDir = join(
-  process.env.HOME ?? process.env.USERPROFILE ?? tmpdir(),
-  '.local',
-  'share',
-  'lsb',
-)
+function defaultDataDir() {
+  if (process.platform === 'win32') {
+    if (process.env.LOCALAPPDATA) {
+      return join(process.env.LOCALAPPDATA, 'lsb')
+    }
+    if (process.env.USERPROFILE) {
+      return join(process.env.USERPROFILE, 'AppData', 'Local', 'lsb')
+    }
+  }
+
+  return join(process.env.HOME ?? tmpdir(), '.local', 'share', 'lsb')
+}
+
+export const defaultRuntimeDataDir = defaultDataDir()
 
 const localBindingCandidatesByPlatform: Partial<
   Record<NodeJS.Platform, Partial<Record<string, string[]>>>
