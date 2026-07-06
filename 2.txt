@@ -1,0 +1,3 @@
+$env:LSB_TEST_REAL_QEMU = "1"
+  cargo test -p lsb-sdk windows_qemu_direct_smb_mount_smoke --
+  --ignored --nocapture

@@ -1,0 +1,2 @@
+C:\Users\SG3937\AppData\Local\Temp\lsb-user-rights.inf:4:SeNetworkLogonRight = *S-1-5-32-544,*S-1-5-32-555
+C:\Users\SG3937\AppData\Local\Temp\lsb-user-rights.inf:27:SeDenyNetworkLogonRight = *S-1-5-113,*S-1-5-32-546
