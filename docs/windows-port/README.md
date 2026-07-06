@@ -11,8 +11,9 @@ non-interactive exec, guest file transfer, staged mount imports, host-to-guest
 port forwarding without a guest NIC, policy-mediated `--allow-net`, flattened
 qcow2 checkpoints, Windows x64 Node package metadata, and hosted/self-hosted CI
 coverage. The release path includes Windows x64 CLI and runtime asset artifacts
-plus a native PowerShell installer while continuing to require a user-installed
-QEMU.
+plus a native PowerShell installer. `lsb init` installs the managed QEMU host
+tool package under `%LOCALAPPDATA%\lsb\tools\qemu` and does not mutate global
+`PATH`.
 
 For normal Windows development, download released runtime assets with `lsb init`
 instead of building them locally. The Windows package contains `Image`,

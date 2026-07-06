@@ -30,7 +30,8 @@ the primary routing control.
 - Hardware virtualization enabled in firmware.
 - Windows Hypervisor Platform enabled.
 - Hyper-V compatible configuration sufficient for QEMU WHPX.
-- QEMU installed and discoverable by `LSB_QEMU` or `PATH`.
+- Network access to the pinned managed QEMU release artifact, or a prewarmed
+  `%LOCALAPPDATA%\lsb\tools\qemu` cache for the runner account.
 - Rust toolchain matching repository expectations.
 - Node toolchain for binding smoke coverage.
 - Git configured for long paths if needed.
@@ -42,7 +43,6 @@ the primary routing control.
 ## Suggested environment
 
 ```powershell
-$env:LSB_QEMU="C:\Program Files\qemu\qemu-system-x86_64.exe"
 $env:LSB_WINDOWS_INTEGRATION="1"
 ```
 
@@ -55,8 +55,8 @@ Record output in a secure maintainer note or CI artifact:
 
 ```powershell
 systeminfo
-where qemu-system-x86_64
-qemu-system-x86_64 --version
+cargo run -p lsb-cli -- init --host-tools-only --force
+Get-Content "$env:LOCALAPPDATA\lsb\tools\qemu\current.json"
 cargo --version
 rustc --version
 node --version
@@ -108,7 +108,7 @@ runs do not use the helper.
   copies, and exports `LSB_WINDOWS_BOOT_KERNEL`,
   `LSB_WINDOWS_BOOT_INITRD`, `LSB_WINDOWS_BOOT_ROOTFS`, and
   `LSB_WINDOWS_BOOT_ARTIFACT_DIR` through `GITHUB_ENV`.
-- `scripts/windows-smoke.ps1`: verifies CLI startup, real QEMU/WHPX preflight,
+- `scripts/windows-smoke.ps1`: verifies CLI startup, managed QEMU/WHPX preflight,
   Windows Node source and packed-package smoke, and boot/ready/exec/copy/mount/
   port-forward/checkpoint/network smokes when boot assets are present.
 - `scripts/windows-e2e.ps1`: current e2e entrypoint; it stages

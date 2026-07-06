@@ -7,9 +7,9 @@ deleted sprint workspace.
 
 - Rerun `./scripts/win-gh-test smoke` at final branch head after diagnostics
   collector scoping changes.
-- Decide and document the minimum supported QEMU version.
-- Evaluate whether a later Windows release should bundle/sign a known QEMU
-  distribution instead of continuing with user-installed QEMU.
+- Decide and document the support policy for user-supplied QEMU overrides.
+- Evaluate signing, SBOM, or mirroring improvements for the managed QEMU
+  artifact.
 - Add a user-facing Windows diagnostics command such as `lsb doctor windows`.
 - Decide whether to keep default self-hosted labels or add a dedicated WHPX
   runner label before growing the runner pool.
@@ -85,7 +85,8 @@ requires additional Windows-specific registration and guest kernel work.
   mechanism.
 - Continue testing direct-IP, forged Host/SNI, missing-domain, and secret
   redaction paths as proxy code evolves.
-- Revisit QEMU binary provenance and path trust before public release.
+- Continue hardening managed QEMU provenance, release validation, and override
+  path trust.
 
 ## Platform expansion
 

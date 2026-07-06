@@ -859,6 +859,8 @@ function Invoke-WindowsCliE2E {
     [Environment]::SetEnvironmentVariable("HOME", $homeRoot, "Process")
     [Environment]::SetEnvironmentVariable("LOCALAPPDATA", $localAppDataRoot, "Process")
 
+    Invoke-LsbCli @("init", "--host-tools-only", "--force")
+
     Test-BasicRunAndNoNetwork
     Test-MountWorkflow
     Test-PortForwardWorkflow

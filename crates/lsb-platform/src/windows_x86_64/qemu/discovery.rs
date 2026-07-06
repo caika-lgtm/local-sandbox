@@ -15,6 +15,7 @@ pub(crate) const QEMU_SYSTEM_X86_64_EXE: &str = "qemu-system-x86_64.exe";
 pub(crate) enum QemuPathSource {
     Env,
     Config,
+    Managed,
     Path,
 }
 
@@ -29,6 +30,7 @@ pub(crate) trait QemuDiscoveryHost {
     fn path_entries(&self) -> Vec<PathBuf>;
     fn is_file(&self, path: &Path) -> bool;
     fn canonicalize(&self, path: &Path) -> Option<PathBuf>;
+    fn managed_qemu_system_path(&self, data_dir: &Path) -> Option<PathBuf>;
     fn host_os(&self) -> String;
     fn host_arch(&self) -> String;
     fn windows_major_version(&self) -> Option<u32>;
@@ -58,6 +60,11 @@ impl QemuDiscoveryHost for StdQemuDiscoveryHost {
         fs::canonicalize(path).ok()
     }
 
+    fn managed_qemu_system_path(&self, data_dir: &Path) -> Option<PathBuf> {
+        crate::windows_x86_64::host_tools::active_managed_qemu(data_dir)
+            .map(|install| install.qemu_system_x86_64)
+    }
+
     fn host_os(&self) -> String {
         env::consts::OS.to_string()
     }
@@ -78,6 +85,7 @@ where
 {
     host: &'host H,
     configured_qemu: Option<PathBuf>,
+    managed_data_dir: Option<PathBuf>,
 }
 
 impl<'host, H> QemuDiscovery<'host, H>
@@ -88,12 +96,18 @@ where
         Self {
             host,
             configured_qemu: None,
+            managed_data_dir: None,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_configured_qemu(mut self, path: impl Into<PathBuf>) -> Self {
         self.configured_qemu = Some(path.into());
+        self
+    }
+
+    pub(crate) fn with_managed_data_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.managed_data_dir = Some(path.into());
         self
     }
 
@@ -108,6 +122,19 @@ where
 
         if let Some(path) = &self.configured_qemu {
             return self.validate_config_path(path.clone());
+        }
+
+        let managed_data_dir = self
+            .managed_data_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(crate::default_data_dir()));
+        if let Some(path) = self.host.managed_qemu_system_path(&managed_data_dir) {
+            if self.host.is_file(&path) {
+                return Ok(QemuPath {
+                    path: self.canonical_or_original(&path),
+                    source: QemuPathSource::Managed,
+                });
+            }
         }
 
         let path_entries = self.host.path_entries();

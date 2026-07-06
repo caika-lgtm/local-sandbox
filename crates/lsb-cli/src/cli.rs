@@ -107,6 +107,10 @@ pub(crate) enum Commands {
         /// Force re-download even if assets exist
         #[arg(long)]
         force: bool,
+
+        /// Initialize Windows host tools without downloading runtime assets
+        #[arg(long, hide = true)]
+        host_tools_only: bool,
     },
 
     /// Upgrade lsb to the latest release (CLI + OS image)

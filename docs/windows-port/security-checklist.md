@@ -31,17 +31,31 @@ Before merging Windows backend work, answer:
 - [ ] Does failure cleanup terminate QEMU/helper processes?
 - [ ] Does the feature fail closed on unsupported Windows/QEMU capability?
 - [ ] Are diagnostics redacted and allowlisted?
+- [ ] For managed host tools, are archive entries path-safe, artifact hashes
+      pinned, license notices present, and global PATH left unchanged?
 
 ## QEMU process
 
 - Validate QEMU path before execution.
 - Prefer absolute path after discovery.
+- For managed QEMU, execute from `%LOCALAPPDATA%\lsb\tools\qemu\<package>` via
+  `current.json`; do not add that directory to user or system `PATH`.
 - Do not execute QEMU from world-writable directories unless explicitly allowed
   for development with a warning.
 - Use Windows Job Objects or equivalent cleanup so child/helper processes do not
   survive unexpectedly.
 - Keep devices minimal; avoid NICs, USB, display, clipboard, and monitor exposure
   unless needed.
+
+## Managed QEMU package
+
+- Verify the downloaded artifact SHA-256 before extraction.
+- Reject absolute paths, `..`, Windows path prefixes, symlinks, hardlinks, and
+  unsupported archive entry types.
+- Read `qemu-system-x86_64.exe` and `qemu-img.exe` relative paths from
+  `manifest.json`.
+- Validate required notice/provenance files before writing `current.json`.
+- Keep CLI archives, runtime OS assets, and npm packages free of QEMU binaries.
 
 ## QMP
 

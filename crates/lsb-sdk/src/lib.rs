@@ -1,4 +1,5 @@
 mod assets;
+mod host_tools;
 mod process;
 mod runtime;
 mod shell;
@@ -13,9 +14,10 @@ pub use lsb_proxy::config::{ExposeHostMapping, NetworkConfig, ProxyConfig, Secre
 pub use lsb_vm::{default_data_dir, MountConfig};
 
 pub use assets::{
-    assets_ready, init_sandbox, init_sandbox_version, SandboxInitOptions, SandboxInitResult,
-    CURRENT_VERSION,
+    assets_ready, init_runtime_assets_version, init_sandbox, init_sandbox_version,
+    SandboxInitOptions, SandboxInitResult, CURRENT_VERSION,
 };
+pub use host_tools::{init_host_tools, HostToolsInitResult};
 pub use process::ProcessHandle;
 pub use runtime::AsyncSandbox;
 pub use shell::{ShellEvent, ShellHandle, ShellReader, ShellWriter};

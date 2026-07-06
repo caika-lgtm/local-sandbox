@@ -15,7 +15,7 @@ Use this guide to keep Windows backend failures actionable and repeatable.
 
 | Symptom | Likely causes | Evidence to capture | Recommended checks |
 |---|---|---|---|
-| QEMU not found | Not installed, not on PATH, `LSB_QEMU` wrong, unsupported binary | configured path, PATH lookup summary, error kind | `where qemu-system-x86_64`, `qemu-system-x86_64 --version` |
+| QEMU not found | `lsb init` not run, invalid managed package, `LSB_QEMU` wrong, unsupported binary | configured path, managed `current.json` summary, PATH lookup summary, error kind | `lsb init --host-tools-only`, managed executable `--version` |
 | WHPX unavailable | Windows feature disabled, virtualization disabled in firmware, unsupported nested VM, non-Windows-11 host | preflight result, QEMU stderr, Windows version | Windows Features, BIOS virtualization, runner labels |
 | QEMU starts then exits | bad argv, missing assets, unsupported device, invalid path quoting | redacted argv, stderr, exit code | run redacted argv manually from temp dir |
 | Kernel does not boot | wrong kernel arch, missing `console`, WHPX/device issue, bad initrd | serial log, QEMU stderr, asset hashes | compare direct boot argv and serial config |
@@ -46,6 +46,22 @@ directory, or under `LSB_WINDOWS_BOOT_ARTIFACT_DIR` for ignored smoke tests:
   control.log.redacted     # if produced
   proxy.log.redacted       # if produced
 ```
+
+Managed QEMU host-tool metadata lives under:
+
+```text
+%LOCALAPPDATA%\lsb\tools\qemu\
+  current.json
+  qemu-11.0.50-lsb0.4.0\
+    manifest.json
+    qemu-system-x86_64.exe
+    qemu-img.exe
+```
+
+`preflight.json` records the selected QEMU source as `env`, `config`,
+`managed`, or `path`. `environment.summary.json` records the managed
+`current.json` path, package version, artifact SHA-256, and absolute executable
+paths when available.
 
 For self-hosted workflow runs, the source diagnostics path is:
 
@@ -91,6 +107,7 @@ The collector:
 - timestamp-scopes workspace `target` logs when a run-start timestamp exists,
 - records external persistent `CARGO_TARGET_DIR` caches as skipped instead of
   uploading them,
+- probes managed QEMU executables by absolute path when `current.json` exists,
 - allowlists environment capture rather than dumping the raw environment,
 - redacts known secret values and common token/private-key patterns.
 

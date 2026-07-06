@@ -19,13 +19,16 @@ backend.
 
 Workflow: `.github/workflows/ci.yml`.
 
-Hosted Windows jobs must not require QEMU, WHPX, nested virtualization, or boot
-assets. They are for compile/unit/golden coverage only.
+Hosted Windows jobs must not require WHPX, nested virtualization, boot assets,
+or external QEMU downloads. They are for compile/unit/golden coverage only and
+use local archive fixtures for managed-QEMU installer tests.
 
 Expected hosted coverage:
 
 - `cargo check --workspace --locked --target x86_64-pc-windows-msvc`
 - focused `lsb-platform` QEMU argv/preflight tests
+- managed-QEMU metadata, safe extraction, hash validation, idempotency, and
+  discovery precedence tests
 - `cargo test --workspace --locked`
 - diagnostic collector probes for hosted artifact staging
 
@@ -66,17 +69,20 @@ watches the run, and prints failed logs when available.
 
 - `check`: runs native Windows `cargo check --workspace --locked`.
 - `unit`: runs native Windows `cargo test --workspace --locked`.
-- `smoke`: runs `scripts/windows-smoke.ps1`.
-- `e2e`: runs `scripts/windows-e2e.ps1`.
+- `smoke`: installs managed QEMU with `lsb init --host-tools-only --force`,
+  then runs `scripts/windows-smoke.ps1`.
+- `e2e`: installs managed QEMU with `lsb init --host-tools-only --force`,
+  then runs `scripts/windows-e2e.ps1`; the e2e script also initializes host
+  tools inside its isolated `LOCALAPPDATA`.
 
 The `smoke` and `e2e` lanes use a persistent boot asset cache under
 `C:\lsb-assets\by-key\<asset-key>\`. QEMU boots only a disposable per-run copy
 under `C:\lsb-assets\work\<run-id>-<attempt>\`.
 
-For normal Windows development, use released runtime assets downloaded by
-`lsb init`. Building `windows-x86_64` runtime assets with `prepare-rootfs` is an
-advanced Docker/Linux-hosted path; it is not the recommended local Windows
-workflow.
+For normal Windows development, use `lsb init` to install managed QEMU host
+tools and released runtime assets. Building `windows-x86_64` runtime assets with
+`prepare-rootfs` is an advanced Docker/Linux-hosted path; it is not the
+recommended local Windows workflow.
 
 If the local Windows cache is missing, the workflow prepares `windows-x86_64`
 boot assets on a hosted Linux job, uploads them as a same-run artifact, hydrates
@@ -96,6 +102,7 @@ through a user-facing workflow.
 `scripts/windows-smoke.ps1` currently verifies:
 
 - CLI starts.
+- Managed QEMU installs and reports `current.json` paths.
 - Real QEMU/WHPX preflight.
 - Windows Node source build/import smoke.
 - Packed root npm package plus `@local-sandbox/lsb-nodejs-win32-x64-msvc`
@@ -135,11 +142,11 @@ message and must not claim direct boot validation.
 
 ## Direct ignored-test commands
 
-Use these only on a Windows 11 x64 host with QEMU/WHPX and disposable boot
-assets:
+Use these only on a Windows 11 x64 host with managed QEMU/WHPX and disposable
+boot assets:
 
 ```powershell
-$env:LSB_QEMU="C:\Program Files\qemu\qemu-system-x86_64.exe"
+cargo run -p lsb-cli -- init --host-tools-only --force
 $env:LSB_TEST_REAL_QEMU="1"
 cargo test -p lsb-platform real_qemu_preflight_when_explicitly_enabled -- --ignored --nocapture
 

@@ -116,8 +116,27 @@ jobs:
           path: lsb-*.tar.gz
           retention-days: 1
 
+  validate-managed-qemu:
+    name: Validate managed Windows QEMU artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve managed QEMU metadata
+        run: cargo run -p xtask -- platform-meta --platform windows-x86_64 --format env >> "$GITHUB_ENV"
+
+      - name: Verify managed QEMU artifact
+        run: |
+          echo "Managed QEMU package: ${LSB_MANAGED_QEMU_PACKAGE_VERSION}"
+          echo "Managed QEMU URL: ${LSB_MANAGED_QEMU_URL}"
+          curl -fsSL "${LSB_MANAGED_QEMU_URL}" -o "${LSB_MANAGED_QEMU_TARBALL}"
+          echo "${LSB_MANAGED_QEMU_SHA256}  ${LSB_MANAGED_QEMU_TARBALL}" | sha256sum -c -
+
   release:
-    needs: [build-os-image, build-cli]
+    needs: [build-os-image, build-cli, validate-managed-qemu]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

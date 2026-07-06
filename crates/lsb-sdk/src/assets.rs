@@ -6,6 +6,8 @@ use flate2::read::GzDecoder;
 use lsb_platform::{asset_paths, supported_runtime_platform, AssetPaths};
 use tar::Archive;
 
+use crate::host_tools::{init_host_tools, HostToolsInitResult};
+
 const GITHUB_REPO: &str = "LocalSandBox/local-sandbox";
 
 /// Version of runtime assets expected by this SDK build.
@@ -34,6 +36,8 @@ pub struct SandboxInitResult {
     pub pinned: bool,
     /// Concrete runtime asset paths derived from `data_dir`.
     pub paths: AssetPaths,
+    /// Host tool initialization status when this call initialized host tools.
+    pub host_tools: Option<HostToolsInitResult>,
 }
 
 /// Check if the runtime assets exist and match this SDK version.
@@ -60,12 +64,38 @@ pub fn init_sandbox_version(
     let data_dir = options
         .data_dir
         .unwrap_or_else(lsb_platform::default_data_dir);
+    let force = options.force;
+    let host_tools = init_host_tools(Some(data_dir.clone()), force)?;
+    init_runtime_assets_for_data_dir(data_dir, version, force, Some(host_tools))
+}
+
+/// Ensure runtime assets for a specific version exist without initializing host tools.
+///
+/// This is intended for callers that already handled host-tool initialization
+/// separately for status reporting. Normal users should call `init_sandbox` or
+/// `init_sandbox_version`.
+pub fn init_runtime_assets_version(
+    options: SandboxInitOptions,
+    version: &str,
+) -> Result<SandboxInitResult> {
+    let data_dir = options
+        .data_dir
+        .unwrap_or_else(lsb_platform::default_data_dir);
+    init_runtime_assets_for_data_dir(data_dir, version, options.force, None)
+}
+
+fn init_runtime_assets_for_data_dir(
+    data_dir: String,
+    version: &str,
+    force: bool,
+    host_tools: Option<HostToolsInitResult>,
+) -> Result<SandboxInitResult> {
     let paths = asset_paths(&data_dir);
 
     let version_record_path = format!("{}/cas/base-versions/{}.json", data_dir, version);
     let was_pinned = std::path::Path::new(&version_record_path).exists();
 
-    if !options.force && assets_ready_for_version(&data_dir, version) {
+    if !force && assets_ready_for_version(&data_dir, version) {
         lsb_store::pin_base_version(&data_dir, &paths.rootfs, version, false)?;
         return Ok(SandboxInitResult {
             data_dir,
@@ -73,11 +103,12 @@ pub fn init_sandbox_version(
             downloaded: false,
             pinned: !was_pinned,
             paths,
+            host_tools,
         });
     }
 
     download_os_image_version(&data_dir, version)?;
-    lsb_store::pin_base_version(&data_dir, &paths.rootfs, version, options.force)?;
+    lsb_store::pin_base_version(&data_dir, &paths.rootfs, version, force)?;
 
     Ok(SandboxInitResult {
         data_dir,
@@ -85,6 +116,7 @@ pub fn init_sandbox_version(
         downloaded: true,
         pinned: true,
         paths,
+        host_tools,
     })
 }
 
@@ -181,6 +213,31 @@ mod tests {
         write_ready_assets(&data_dir, CURRENT_VERSION);
         let data_dir_str = data_dir.to_string_lossy().into_owned();
 
+        let result = init_runtime_assets_version(
+            SandboxInitOptions {
+                data_dir: Some(data_dir_str.clone()),
+                force: false,
+            },
+            CURRENT_VERSION,
+        )
+        .expect("runtime init should succeed without downloading");
+
+        assert_eq!(result.data_dir, data_dir_str);
+        assert_eq!(result.version, CURRENT_VERSION);
+        assert!(!result.downloaded);
+        assert_eq!(result.paths.kernel, format!("{}/Image", result.data_dir));
+        assert!(result.host_tools.is_none());
+
+        let _ = fs::remove_dir_all(data_dir);
+    }
+
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    #[test]
+    fn init_sandbox_includes_non_windows_host_tools_noop() {
+        let data_dir = temp_data_dir();
+        write_ready_assets(&data_dir, CURRENT_VERSION);
+        let data_dir_str = data_dir.to_string_lossy().into_owned();
+
         let result = init_sandbox(SandboxInitOptions {
             data_dir: Some(data_dir_str.clone()),
             force: false,
@@ -191,6 +248,8 @@ mod tests {
         assert_eq!(result.version, CURRENT_VERSION);
         assert!(!result.downloaded);
         assert_eq!(result.paths.kernel, format!("{}/Image", result.data_dir));
+        assert!(result.host_tools.is_some());
+        assert!(!result.host_tools.expect("host tools result").supported);
 
         let _ = fs::remove_dir_all(data_dir);
     }

@@ -57,10 +57,14 @@ fn main() -> Result<()> {
             let _ = std::fs::remove_dir_all(&prepared.instance_dir);
             process::exit(result?);
         }
-        Commands::Init { version, force } => {
+        Commands::Init {
+            version,
+            force,
+            host_tools_only,
+        } => {
             let data_dir = default_data_dir();
             let version = version.as_deref().unwrap_or(assets::CURRENT_VERSION);
-            assets::init_os_image_version(&data_dir, version, force)?;
+            assets::init_version(&data_dir, version, force, host_tools_only)?;
         }
         Commands::Upgrade => {
             let data_dir = default_data_dir();

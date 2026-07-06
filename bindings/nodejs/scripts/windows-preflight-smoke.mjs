@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 const require = createRequire(import.meta.url)
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const packageRoot = dirname(scriptDir)
+const packageVersion = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).version
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -25,7 +26,7 @@ function prepareDataDir(label) {
   copyFileSync(requireEnv('LSB_WINDOWS_BOOT_KERNEL'), join(root, 'Image'))
   copyFileSync(requireEnv('LSB_WINDOWS_BOOT_INITRD'), join(root, 'initramfs.cpio.gz'))
   copyFileSync(requireEnv('LSB_WINDOWS_BOOT_ROOTFS'), join(root, 'rootfs.ext4'))
-  writeFileSync(join(root, 'VERSION'), 'windows-node-smoke\n')
+  writeFileSync(join(root, 'VERSION'), `${packageVersion}\n`)
 
   return root
 }
@@ -100,11 +101,12 @@ async function expectMissingQemuPreflight(Sandbox) {
   }
 }
 
-async function expectSandboxStart(Sandbox) {
+async function expectSandboxStart(Sandbox, initSandbox) {
   const dataDir = prepareDataDir('start')
   let sandbox = null
 
   try {
+    await initSandbox({ dataDir })
     sandbox = await Sandbox.start({
       dataDir,
       instanceId: `node-start-${process.pid}`,
@@ -129,10 +131,13 @@ if (process.platform !== 'win32' || process.arch !== 'x64') {
   throw new Error(`Windows Node smoke requires win32/x64, got ${process.platform}/${process.arch}`)
 }
 
-const { Sandbox } = loadBinding()
+const { Sandbox, initSandbox } = loadBinding()
 if (typeof Sandbox?.start !== 'function') {
   throw new Error('Windows Node binding did not export Sandbox.start')
 }
+if (typeof initSandbox !== 'function') {
+  throw new Error('Windows Node binding did not export initSandbox')
+}
 
 await expectMissingQemuPreflight(Sandbox)
-await expectSandboxStart(Sandbox)
+await expectSandboxStart(Sandbox, initSandbox)

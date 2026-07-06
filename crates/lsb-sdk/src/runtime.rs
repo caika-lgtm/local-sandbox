@@ -564,6 +564,7 @@ fn boot_vm(config: SandboxConfig) -> Result<BootedVm> {
     let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());
 
     let mut builder = lsb_vm::Sandbox::builder()
+        .data_dir(&data_dir)
         .kernel(&kernel_path)
         .rootfs(&prepared_storage.active_disk)
         .cpus(config.cpus)
@@ -969,6 +970,8 @@ mod tests {
             use crate::types::SandboxConfig;
 
             let data_dir = prepare_checkpoint_smoke_data_dir();
+            crate::init_host_tools(Some(data_dir.display().to_string()), false)
+                .expect("managed QEMU host tools should initialize for checkpoint smoke data dir");
             let checkpoint_name = format!("checkpoint-smoke-{}", std::process::id());
             let store = lsb_store::WindowsCheckpointStore::new(&data_dir);
             let _ = store.delete_checkpoint(&checkpoint_name);
@@ -1126,6 +1129,8 @@ mod tests {
 
             let _storage_guard = EnvVarGuard::set("LSB_STORAGE", "direct");
             let data_dir = prepare_smoke_data_dir();
+            crate::init_host_tools(Some(data_dir.display().to_string()), false)
+                .expect("managed QEMU host tools should initialize for network smoke data dir");
             let secret_value = "network-policy-real-secret-never-in-guest".to_string();
             let mut secrets = HashMap::new();
             secrets.insert(

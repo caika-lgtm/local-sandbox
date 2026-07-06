@@ -97,7 +97,7 @@ impl WindowsCheckpointStore {
             });
         }
 
-        let qemu_img = QemuImg::discover()?;
+        let qemu_img = QemuImg::discover_for_data_dir(&self.data_dir)?;
         let tmp = temp_path_for(destination, "create");
         remove_file_if_exists(&tmp)?;
         if let Some(parent) = destination.parent() {
@@ -147,7 +147,7 @@ impl WindowsCheckpointStore {
 
         let active_disk = active_disk.as_ref();
         ensure_file(active_disk, "active Windows checkpoint disk")?;
-        let qemu_img = QemuImg::discover()?;
+        let qemu_img = QemuImg::discover_for_data_dir(&self.data_dir)?;
         let tmp_disk = temp_path_for(&paths.qcow2_path, "convert");
         let tmp_metadata = temp_path_for(&paths.metadata_path, "metadata");
         let _ = fs::remove_file(&tmp_disk);
@@ -536,6 +536,17 @@ pub struct QemuImg {
 
 impl QemuImg {
     pub fn discover() -> Result<Self, WindowsCheckpointError> {
+        Self::discover_for_data_dir(Path::new(&lsb_platform::default_data_dir()))
+    }
+
+    pub fn discover_for_data_dir(data_dir: &Path) -> Result<Self, WindowsCheckpointError> {
+        Self::discover_with_configured_qemu(data_dir, None)
+    }
+
+    pub fn discover_with_configured_qemu(
+        data_dir: &Path,
+        configured_qemu: Option<&Path>,
+    ) -> Result<Self, WindowsCheckpointError> {
         if let Some(path) = std::env::var_os("LSB_QEMU_IMG") {
             let path = PathBuf::from(path);
             if path.is_file() {
@@ -556,6 +567,23 @@ impl QemuImg {
             }
         }
 
+        if let Some(qemu_path) = configured_qemu {
+            let sibling = qemu_path.with_file_name(qemu_img_file_name());
+            if sibling.is_file() {
+                return Ok(Self { program: sibling });
+            }
+        }
+
+        if let Some(managed) =
+            lsb_platform::windows_x86_64::host_tools::active_managed_qemu(data_dir)
+        {
+            if managed.qemu_img.is_file() {
+                return Ok(Self {
+                    program: managed.qemu_img,
+                });
+            }
+        }
+
         let path_entries = std::env::var_os("PATH")
             .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
             .unwrap_or_default();
@@ -568,7 +596,7 @@ impl QemuImg {
 
         Err(WindowsCheckpointError::QemuImgNotFound {
             detail: format!(
-                "{} was not found via LSB_QEMU_IMG, next to LSB_QEMU, or in {} PATH entries",
+                "{} was not found via LSB_QEMU_IMG, next to LSB_QEMU, next to configured QEMU, managed QEMU, or in {} PATH entries",
                 qemu_img_file_name(),
                 path_entries.len()
             ),
@@ -717,7 +745,7 @@ impl fmt::Display for WindowsCheckpointError {
             ),
             Self::QemuImgNotFound { detail } => write!(
                 f,
-                "qemu-img.exe is required for the Windows checkpoint/store backend but was not found: {detail}. Install QEMU for Windows or set LSB_QEMU_IMG"
+                "qemu-img.exe is required for the Windows checkpoint/store backend but was not found: {detail}. Run `lsb init` to install managed QEMU host tools or set LSB_QEMU_IMG"
             ),
             Self::QemuImgFailed {
                 program,
@@ -1010,6 +1038,9 @@ fn empty_as_placeholder(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn store(root: &Path) -> WindowsCheckpointStore {
         WindowsCheckpointStore::new(root.join("data"))
@@ -1023,6 +1054,82 @@ mod tests {
             path: root.join("data/rootfs.ext4"),
             disk_format: WindowsDiskImageFormat::Raw,
             virtual_size_bytes: 4096,
+        }
+    }
+
+    fn write_managed_qemu(data_dir: &Path) -> (PathBuf, PathBuf) {
+        use lsb_platform::windows_x86_64::host_tools::{
+            managed_qemu_package_metadata, managed_qemu_paths, ManagedQemuCurrent,
+            MANAGED_QEMU_CURRENT_SCHEMA_VERSION, MANAGED_QEMU_MANIFEST_SCHEMA_VERSION,
+        };
+
+        let metadata = managed_qemu_package_metadata();
+        let paths = managed_qemu_paths(data_dir);
+        fs::create_dir_all(&paths.package_dir).expect("managed qemu dir");
+        let qemu_system = paths.package_dir.join("qemu-system-x86_64.exe");
+        let qemu_img = paths.package_dir.join("qemu-img.exe");
+        let manifest = paths.package_dir.join("manifest.json");
+        fs::write(&qemu_system, b"qemu system").expect("qemu system");
+        fs::write(&qemu_img, b"qemu img").expect("qemu img");
+        fs::write(
+            &manifest,
+            format!(
+                r#"{{
+                  "schema_version": {},
+                  "package_version": "{}",
+                  "qemu_version": "{}",
+                  "lsb_version": "{}",
+                  "platform": "{}",
+                  "qemu_system_x86_64": "qemu-system-x86_64.exe",
+                  "qemu_img": "qemu-img.exe",
+                  "files": []
+                }}"#,
+                MANAGED_QEMU_MANIFEST_SCHEMA_VERSION,
+                metadata.package_version,
+                metadata.qemu_version,
+                metadata.lsb_version,
+                metadata.platform
+            ),
+        )
+        .expect("manifest");
+        fs::create_dir_all(&paths.qemu_dir).expect("qemu dir");
+        fs::write(
+            &paths.current_json,
+            serde_json::to_string_pretty(&ManagedQemuCurrent {
+                schema_version: MANAGED_QEMU_CURRENT_SCHEMA_VERSION,
+                package_version: metadata.package_version.to_string(),
+                artifact_url: metadata.artifact_url.to_string(),
+                artifact_sha256: metadata.artifact_sha256.to_string(),
+                installed_at_unix_secs: 1,
+                qemu_system_x86_64: qemu_system.clone(),
+                qemu_img: qemu_img.clone(),
+                manifest,
+            })
+            .expect("current json"),
+        )
+        .expect("write current");
+        (qemu_system, qemu_img)
+    }
+
+    fn with_env_lock<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let old_qemu_img = std::env::var_os("LSB_QEMU_IMG");
+        let old_qemu = std::env::var_os("LSB_QEMU");
+        let old_path = std::env::var_os("PATH");
+        std::env::remove_var("LSB_QEMU_IMG");
+        std::env::remove_var("LSB_QEMU");
+        std::env::remove_var("PATH");
+        let result = f();
+        restore_env("LSB_QEMU_IMG", old_qemu_img);
+        restore_env("LSB_QEMU", old_qemu);
+        restore_env("PATH", old_path);
+        result
+    }
+
+    fn restore_env(name: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
         }
     }
 
@@ -1117,6 +1224,102 @@ mod tests {
                     .as_ref()
             ]
         );
+    }
+
+    #[test]
+    fn qemu_img_discovery_prefers_env_over_managed() {
+        with_env_lock(|| {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data_dir = tmp.path().join("data");
+            let (_, managed_img) = write_managed_qemu(&data_dir);
+            let env_img = tmp.path().join("env").join(qemu_img_file_name());
+            fs::create_dir_all(env_img.parent().expect("parent")).expect("env dir");
+            fs::write(&env_img, b"env").expect("env img");
+            std::env::set_var("LSB_QEMU_IMG", &env_img);
+
+            let discovered =
+                QemuImg::discover_for_data_dir(&data_dir).expect("env qemu-img should win");
+
+            assert_eq!(discovered.program(), env_img);
+            assert_ne!(discovered.program(), managed_img);
+        });
+    }
+
+    #[test]
+    fn qemu_img_discovery_uses_lsb_qemu_sibling_before_managed() {
+        with_env_lock(|| {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data_dir = tmp.path().join("data");
+            write_managed_qemu(&data_dir);
+            let env_qemu = tmp.path().join("env/qemu-system-x86_64.exe");
+            let env_img = tmp.path().join("env").join(qemu_img_file_name());
+            fs::create_dir_all(env_qemu.parent().expect("parent")).expect("env dir");
+            fs::write(&env_qemu, b"env qemu").expect("env qemu");
+            fs::write(&env_img, b"env img").expect("env img");
+            std::env::set_var("LSB_QEMU", &env_qemu);
+
+            let discovered =
+                QemuImg::discover_for_data_dir(&data_dir).expect("LSB_QEMU sibling should win");
+
+            assert_eq!(discovered.program(), env_img);
+        });
+    }
+
+    #[test]
+    fn qemu_img_discovery_uses_configured_qemu_sibling_before_managed() {
+        with_env_lock(|| {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data_dir = tmp.path().join("data");
+            write_managed_qemu(&data_dir);
+            let config_qemu = tmp.path().join("config/qemu-system-x86_64.exe");
+            let config_img = tmp.path().join("config").join(qemu_img_file_name());
+            fs::create_dir_all(config_qemu.parent().expect("parent")).expect("config dir");
+            fs::write(&config_qemu, b"config qemu").expect("config qemu");
+            fs::write(&config_img, b"config img").expect("config img");
+
+            let discovered = QemuImg::discover_with_configured_qemu(&data_dir, Some(&config_qemu))
+                .expect("configured sibling should win");
+
+            assert_eq!(discovered.program(), config_img);
+        });
+    }
+
+    #[test]
+    fn qemu_img_discovery_uses_managed_before_path() {
+        with_env_lock(|| {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data_dir = tmp.path().join("data");
+            let (_, managed_img) = write_managed_qemu(&data_dir);
+            let path_dir = tmp.path().join("path");
+            let path_img = path_dir.join(qemu_img_file_name());
+            fs::create_dir_all(&path_dir).expect("path dir");
+            fs::write(&path_img, b"path img").expect("path img");
+            std::env::set_var("PATH", std::env::join_paths([path_dir]).expect("join PATH"));
+
+            let discovered =
+                QemuImg::discover_for_data_dir(&data_dir).expect("managed qemu-img should win");
+
+            assert_eq!(discovered.program(), managed_img);
+            assert_ne!(discovered.program(), path_img);
+        });
+    }
+
+    #[test]
+    fn qemu_img_discovery_falls_back_to_path() {
+        with_env_lock(|| {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data_dir = tmp.path().join("data");
+            let path_dir = tmp.path().join("path");
+            let path_img = path_dir.join(qemu_img_file_name());
+            fs::create_dir_all(&path_dir).expect("path dir");
+            fs::write(&path_img, b"path img").expect("path img");
+            std::env::set_var("PATH", std::env::join_paths([path_dir]).expect("join PATH"));
+
+            let discovered =
+                QemuImg::discover_for_data_dir(&data_dir).expect("PATH qemu-img should resolve");
+
+            assert_eq!(discovered.program(), path_img);
+        });
     }
 
     #[test]

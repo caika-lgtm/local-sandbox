@@ -71,6 +71,9 @@ State the decision precisely.
 - Date: 2026-07-02
 - Decision: MVP discovers an installed `qemu-system-x86_64.exe` through explicit configuration/env/PATH. Bundling may be considered after the backend is stable.
 - Consequence: Preflight diagnostics must be strong enough for user-installed QEMU.
+- Update: D023 changes the standard post-MVP path to a managed QEMU host-tool
+  package installed by `lsb init`; env/config/PATH discovery remains supported
+  as override and fallback behavior.
 
 ### D005: Production requires WHPX
 
@@ -264,3 +267,41 @@ registers versioned JSON metadata only after conversion succeeds.
 - QEMU internal snapshots as the product checkpoint abstraction: rejected
   because product checkpoints are explicit saved-disk-state artifacts.
 - Port Unix-socket NBD/CAS first: rejected by D016.
+
+### D023: `lsb init` installs a managed Windows QEMU host tool package
+
+- Status: Accepted
+- Date: 2026-07-07
+- Owner: TBD
+- Related area: packaging | CI
+
+#### Context
+
+The MVP required users and the self-hosted runner to provide QEMU separately.
+That kept the first Windows backend small, but made fresh installs, support
+diagnostics, and CI less reproducible.
+
+#### Decision
+
+On Windows x86_64, `lsb init` installs and validates a pinned LocalSandbox
+managed QEMU package under `%LOCALAPPDATA%\lsb\tools\qemu`. The package is a
+host tool, not part of CLI archives, runtime OS assets, or npm packages. QEMU
+discovery order is `LSB_QEMU`, internal config, managed QEMU, then `PATH`.
+`qemu-img.exe` uses `LSB_QEMU_IMG`, sibling override/config paths, managed QEMU,
+then `PATH`.
+
+#### Consequences
+
+- Fresh Windows users no longer install QEMU separately for the standard path.
+- Diagnostics can distinguish managed QEMU from env/config/PATH overrides.
+- The maintained QEMU artifact must be published and hash-verifiable before
+  product releases.
+- User override QEMU builds remain possible but are no longer the default.
+
+#### Alternatives considered
+
+- Bundle QEMU in CLI/npm/runtime assets: rejected to avoid large artifacts and
+  mixing host tools with guest runtime assets.
+- Continue user-installed QEMU only: rejected for standard UX and CI
+  reproducibility.
+- Add TCG fallback: rejected by D005.

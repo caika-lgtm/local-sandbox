@@ -255,7 +255,7 @@ impl QemuProcessError {
                 "Use the QEMU discovery/preflight result and QEMU argv builder instead of constructing a process command manually."
             }
             Self::MissingExecutable { .. } => {
-                "Install QEMU for Windows, set LSB_QEMU to qemu-system-x86_64.exe, and rerun Windows QEMU preflight."
+                "Run `lsb init` to install managed QEMU host tools, or set LSB_QEMU to qemu-system-x86_64.exe and rerun Windows QEMU preflight."
             }
             Self::PermissionDenied { .. } => {
                 "Check file permissions, endpoint protection policy, and whether this user account may execute the selected QEMU binary and write diagnostics."

@@ -11,14 +11,14 @@ Track Windows backend risks here. Update this file when evidence changes a risk.
 | R005 | Windows proxy attachment could bypass LocalSandbox policy | High | Medium | Windows uses LocalSandbox-owned loopback stream netdev, rejects legacy fd/socketpair/non-loopback paths, and tests direct-IP/forged-host denial | Mitigating | TBD |
 | R006 | Windows checkpoint store lacks CAS/NBD parity | Medium | High | MVP uses flattened qcow2 artifacts; future storage work must choose CAS/NBD, qcow2 chains, or another deduplicated format | Accepted | TBD |
 | R007 | Hosted CI cannot run WHPX | Medium | High | Hosted CI is compile/unit/golden only; manual self-hosted Windows 11 runner covers WHPX runtime | Accepted | Maintainer |
-| R008 | QEMU binary provenance/security if user-installed | Medium | Medium | Discovery diagnostics record path/version; decide bundling/signing or a stronger provenance policy before broader release hardening | Open | TBD |
+| R008 | Managed QEMU artifact provenance/security | Medium | Medium | `lsb init` verifies pinned artifact SHA-256, manifest paths, required notices, and diagnostics record managed package/source; release CI validates artifact availability/hash | Mitigating | Release owner |
 | R009 | Process cleanup leaves QEMU running after host crash/test timeout | High | Medium | Windows Job Object cleanup; fake process tests; periodic runner process checks | Mitigating | TBD |
 | R010 | Network policy bypass through accidental NIC/user networking | High | Medium | Golden/unit/smoke coverage asserts `-nic none` by default, stream proxy only for allow-net, no QEMU user networking/hostfwd/TAP/bridge | Mitigating | TBD |
 | R011 | Public API drift while adding Windows capability errors | Medium | Medium | API-shape tests; keep platform-specific detail below SDK/CLI/Node surfaces | Open | TBD |
 | R012 | Boot asset compatibility differs between QEMU and Apple VZ | High | Medium | Self-hosted boot smoke; x86_64 serial console config; preserve guest asset invariants | Mitigating | TBD |
 | R013 | Default self-hosted Windows labels can route cache probe and smoke jobs to different machines if runner pool grows | Medium | Medium | Current docs record the single-runner assumption, keep the workflow off pull requests, and limit automatic hardware execution to trusted `main` e2e runs. Add a dedicated label or disable local-cache skip path before adding runners. | Open | Maintainer |
 | R014 | Missing mux/session model blocks streaming spawn, shell, watch, and concurrent forwarding | Medium | High | Keep unsupported errors precise; design mux/session model before enabling those APIs | Open | TBD |
-| R015 | Final QEMU minimum version is not pinned | Medium | Medium | Test supported QEMU versions on self-hosted WHPX; document minimum before public release | Open | Release owner |
+| R015 | Override QEMU version policy is not finalized | Medium | Medium | Standard path pins managed QEMU 11.0.50; test and document support expectations for `LSB_QEMU`/PATH overrides | Open | Release owner |
 
 ## Status values
 

@@ -31,6 +31,14 @@ pub fn platform_meta(args: &[String]) -> Result<()> {
                     serde_json::Value::String(platform.release_tag(version)),
                 );
             }
+            if platform.id == "windows-x86_64" {
+                payload.insert(
+                    "managed_qemu".into(),
+                    serde_json::to_value(
+                        lsb_platform::windows_x86_64::host_tools::managed_qemu_package_metadata(),
+                    )?,
+                );
+            }
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         "env" => {
@@ -82,6 +90,22 @@ fn print_env(platform: &PlatformSpec, version: Option<&str>) {
             "LSB_OS_IMAGE_TARBALL={}",
             platform.os_image_tarball_name(version)
         );
+    }
+    if platform.id == "windows-x86_64" {
+        let qemu = lsb_platform::windows_x86_64::host_tools::managed_qemu_package_metadata();
+        println!("LSB_MANAGED_QEMU_PLATFORM={}", qemu.platform);
+        println!("LSB_MANAGED_QEMU_VERSION={}", qemu.qemu_version);
+        println!("LSB_MANAGED_QEMU_LSB_VERSION={}", qemu.lsb_version);
+        println!(
+            "LSB_MANAGED_QEMU_PACKAGE_REVISION={}",
+            qemu.package_revision
+        );
+        println!("LSB_MANAGED_QEMU_PACKAGE_VERSION={}", qemu.package_version);
+        println!("LSB_MANAGED_QEMU_RELEASE_TAG={}", qemu.release_tag);
+        println!("LSB_MANAGED_QEMU_TARBALL={}", qemu.tarball_name);
+        println!("LSB_MANAGED_QEMU_URL={}", qemu.artifact_url);
+        println!("LSB_MANAGED_QEMU_SHA256={}", qemu.artifact_sha256);
+        println!("LSB_MANAGED_QEMU_TOP_LEVEL_DIR={}", qemu.top_level_dir);
     }
 }
 

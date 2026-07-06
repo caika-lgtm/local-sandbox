@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use lsb_platform::supported_runtime_platform;
-use lsb_sdk::SandboxInitOptions;
+use lsb_sdk::{HostToolsInitResult, SandboxInitOptions};
 use serde::Deserialize;
 use tar::Archive;
 
@@ -18,7 +18,22 @@ pub fn assets_ready(data_dir: &str) -> bool {
 
 /// Download and extract OS image assets from GitHub Releases via the SDK.
 pub fn download_os_image(data_dir: &str) -> Result<()> {
-    init_os_image_version(data_dir, CURRENT_VERSION, true)
+    init_version(data_dir, CURRENT_VERSION, true, false)
+}
+
+pub fn init_version(
+    data_dir: &str,
+    version: &str,
+    force: bool,
+    host_tools_only: bool,
+) -> Result<()> {
+    let host_tools = lsb_sdk::init_host_tools(Some(data_dir.to_string()), force)?;
+    print_host_tools_status(&host_tools, host_tools_only);
+    if host_tools_only {
+        return Ok(());
+    }
+
+    init_os_image_version(data_dir, version, force)
 }
 
 pub fn init_os_image_version(data_dir: &str, version: &str, force: bool) -> Result<()> {
@@ -26,7 +41,7 @@ pub fn init_os_image_version(data_dir: &str, version: &str, force: bool) -> Resu
     let tag = platform.release_tag(version);
 
     eprintln!("lsb: initializing OS image ({})...", tag);
-    let result = lsb_sdk::init_sandbox_version(
+    let result = lsb_sdk::init_runtime_assets_version(
         SandboxInitOptions {
             data_dir: Some(data_dir.to_string()),
             force,
@@ -46,7 +61,30 @@ pub fn init_os_image_version(data_dir: &str, version: &str, force: bool) -> Resu
 }
 
 pub fn download_os_image_version(data_dir: &str, version: &str) -> Result<()> {
-    init_os_image_version(data_dir, version, true)
+    init_version(data_dir, version, true, false)
+}
+
+fn print_host_tools_status(result: &HostToolsInitResult, host_tools_only: bool) {
+    if !result.supported {
+        if host_tools_only {
+            eprintln!("lsb: no managed host tools required on this platform");
+        }
+        return;
+    }
+
+    eprintln!("lsb: initializing Windows host tools...");
+    let package = result.package_version.as_deref().unwrap_or("unknown");
+    if result.installed {
+        eprintln!("lsb: QEMU host tools installed ({package})");
+    } else {
+        eprintln!("lsb: QEMU host tools already up to date ({package})");
+    }
+    if let Some(path) = &result.qemu_system_x86_64 {
+        eprintln!("lsb: qemu-system-x86_64={path}");
+    }
+    if let Some(path) = &result.qemu_img {
+        eprintln!("lsb: qemu-img={path}");
+    }
 }
 
 #[derive(Deserialize)]

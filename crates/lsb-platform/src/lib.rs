@@ -268,6 +268,7 @@ impl PlatformNetworkAttachment {
 
 #[derive(Debug, Clone)]
 pub struct PlatformVmConfig {
+    pub data_dir: Option<String>,
     pub kernel_path: String,
     pub rootfs_path: String,
     pub initrd_path: Option<String>,

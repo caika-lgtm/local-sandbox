@@ -8,6 +8,7 @@ mod config;
 mod control;
 mod errors;
 pub mod fs;
+pub mod host_tools;
 mod network;
 mod qemu;
 

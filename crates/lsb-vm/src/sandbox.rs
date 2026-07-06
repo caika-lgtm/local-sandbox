@@ -110,6 +110,7 @@ pub enum MountConfig {
 // --- VmConfigBuilder ---
 
 pub struct VmConfigBuilder {
+    data_dir: Option<String>,
     kernel: Option<String>,
     rootfs: Option<String>,
     initrd: Option<String>,
@@ -126,6 +127,7 @@ pub struct VmConfigBuilder {
 impl VmConfigBuilder {
     pub(crate) fn new() -> Self {
         VmConfigBuilder {
+            data_dir: None,
             kernel: None,
             rootfs: None,
             initrd: None,
@@ -157,6 +159,11 @@ impl VmConfigBuilder {
 
     pub fn kernel(mut self, path: impl Into<String>) -> Self {
         self.kernel = Some(path.into());
+        self
+    }
+
+    pub fn data_dir(mut self, path: impl Into<String>) -> Self {
+        self.data_dir = Some(path.into());
         self
     }
 
@@ -217,6 +224,7 @@ impl VmConfigBuilder {
 
         Ok(Sandbox {
             vm: lsb_platform::create_vm(PlatformVmConfig {
+                data_dir: self.data_dir,
                 kernel_path,
                 rootfs_path,
                 initrd_path: self.initrd,

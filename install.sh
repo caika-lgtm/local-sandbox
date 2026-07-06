@@ -61,6 +61,11 @@ fi
 
 echo ""
 echo "Installed lsb $VERSION to $INSTALL_DIR/$CLI_BINARY"
+if [ "$CLI_SUFFIX" = "windows-x86_64" ]; then
+    echo "Run 'lsb init' after installation to install managed QEMU host tools and runtime assets."
+else
+    echo "Run 'lsb init' after installation to install runtime assets."
+fi
 
 ##### PATH check
 

@@ -18,6 +18,7 @@ lsb-platform platform backend boundary
         |
         +--> Windows QEMU + WHPX backend
                     |
+                    +--> Managed QEMU host-tool install metadata
                     +--> QEMU discovery and preflight
                     +--> QEMU argv builder and redaction
                     +--> QEMU process supervisor and Job Object cleanup
@@ -37,6 +38,7 @@ transport and host backend, not the product model.
 | VM orchestration | `crates/lsb-vm` | Platform-neutral sandbox lifecycle, exec/file/mount/port APIs, Windows smoke hooks. Keep public APIs platform-neutral. |
 | Platform backend | `crates/lsb-platform/src/windows_x86_64` | Windows QEMU/WHPX backend, QEMU modules, control transport, fs planning, networking attachment, backend startup. |
 | QEMU support | `crates/lsb-platform/src/windows_x86_64/qemu` | Discovery, version/preflight, argv, process, boot, and diagnostic artifacts. |
+| Managed host tools | `crates/lsb-platform/src/windows_x86_64/host_tools.rs`, `crates/lsb-sdk/src/host_tools.rs` | Pinned QEMU metadata, `%LOCALAPPDATA%\lsb\tools\qemu` paths, safe install/extraction, manifest validation, and `current.json`. |
 | Control and forwarding | `crates/lsb-platform/src/windows_x86_64/control`, `crates/lsb-proto`, `crates/lsb-guest` | Virtio-serial streams carry existing `lsb-proto` frames. Port forwarding uses a separate virtio-serial channel. |
 | File and mounts | `crates/lsb-platform/src/windows_x86_64/fs`, `crates/lsb-vm`, `crates/lsb-guest` | Copy-in/copy-out plus guest staging for mount MVP. No live host share. |
 | Networking and secrets | `crates/lsb-proxy`, Windows platform network glue | LocalSandbox proxy policy remains authoritative. Windows uses QEMU stream netdev only for allow-net/proxy. |
@@ -50,6 +52,8 @@ transport and host backend, not the product model.
 
 - `lsb-sdk`, CLI, and Node should not know QEMU argv syntax, named pipe paths,
   Job Object details, or WHPX quirks.
+- `lsb-sdk` may initialize managed host tools explicitly through `lsb init` or
+  `initSandbox()`, but VM boot must not download QEMU implicitly.
 - `lsb-vm` owns product-level sandbox operations and calls platform-neutral
   backend hooks.
 - `lsb-platform` owns VM/device/process details and Windows-specific error

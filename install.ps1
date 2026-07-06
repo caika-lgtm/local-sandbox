@@ -168,6 +168,7 @@ try {
 
     Write-Host ""
     Write-Host "Installed lsb $Version to $BinaryPath"
+    Write-Host "Run 'lsb init' after installation to install managed QEMU host tools and runtime assets."
 
     $ResolvedInstallDir = (Resolve-Path $InstallDir).Path
     $PathEntries = $env:PATH -split ";" | Where-Object { $_ }

@@ -28,17 +28,20 @@ corepack yarn install
 
 - Node.js 18+
 - macOS 14+ on Apple Silicon or Intel x86_64, or Windows 11 on x86_64
-- Runtime assets initialized with `initSandbox()` or `lsb init`. `Sandbox.start()` still expects
-  the lsb runtime data directory to already contain `Image`, `rootfs.ext4`, and
-  `initramfs.cpio.gz`; it does not download assets implicitly.
+- Runtime assets initialized with `initSandbox()` or `lsb init`. On Windows,
+  that initialization also installs LocalSandbox-managed QEMU host tools.
+  `Sandbox.start()` still expects the lsb runtime data directory to already
+  contain `Image`, `rootfs.ext4`, and `initramfs.cpio.gz`; it does not download
+  assets or host tools implicitly.
 - On macOS, the `node` executable loading this SDK must be code signed with the
   `com.apple.security.virtualization` entitlement. For a project-local workflow, sign a copied
   Node binary with [`../../lsb.entitlements`](../../lsb.entitlements), or use
   [`test:signed-node`](./package.json) as a reference.
-- On Windows, QEMU is not bundled. Install a Windows QEMU build that provides
-  `qemu-system-x86_64.exe` and `qemu-img.exe`, enable Windows Hypervisor Platform, and make QEMU
-  discoverable through `LSB_QEMU` or `PATH`. The Windows backend requires WHPX; it does not fall
-  back to TCG for production Node users.
+- On Windows, npm packages do not contain QEMU. Enable Windows Hypervisor
+  Platform, then initialize host tools through `initSandbox()` or `lsb init`.
+  The Windows backend requires WHPX and does not fall back to TCG for production
+  Node users. `LSB_QEMU` and `LSB_QEMU_IMG` remain supported override/debug
+  paths.
 - Windows support covers sandbox start/stop, non-interactive `exec()` / `execShell()`, guest file
   APIs, overlay mounts, loopback port forwarding, policy-mediated proxy networking, and checkpoint
   restore/save. Direct writable host mounts, streaming `spawn()`, interactive shells, and `watch()`

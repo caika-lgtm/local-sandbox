@@ -149,13 +149,13 @@ impl QemuPreflightError {
                 "Upgrade to Windows 11 x86_64 or use a supported LocalSandbox host."
             }
             Self::QemuNotFound { .. } => {
-                "Install QEMU for Windows and add qemu-system-x86_64.exe to PATH, or set LSB_QEMU to its absolute path."
+                "Run `lsb init` to install the managed QEMU host tools, set LSB_QEMU to an absolute qemu-system-x86_64.exe path, or add QEMU to PATH."
             }
             Self::EnvQemuPathInvalid { .. } => {
-                "Set LSB_QEMU to an existing qemu-system-x86_64.exe path, or unset it to use PATH discovery."
+                "Set LSB_QEMU to an existing qemu-system-x86_64.exe path, or unset it to use managed/PATH discovery."
             }
             Self::ConfigQemuPathInvalid { .. } => {
-                "Point the LocalSandbox QEMU configuration hook at qemu-system-x86_64.exe, or remove it to use PATH discovery."
+                "Point the LocalSandbox QEMU configuration hook at qemu-system-x86_64.exe, or remove it to use managed/PATH discovery."
             }
             Self::QemuCannotExecute { .. } => {
                 "Verify the QEMU installation is complete, the executable is not blocked by policy, and qemu-system-x86_64.exe --version works from this user account."
@@ -195,7 +195,7 @@ impl fmt::Display for QemuPreflightError {
                 searched_path_entries,
             } => write!(
                 f,
-                "qemu-system-x86_64.exe was not found after checking LSB_QEMU, the LocalSandbox config hook, and {searched_path_entries} PATH entr{}. {}",
+                "qemu-system-x86_64.exe was not found after checking LSB_QEMU, the LocalSandbox config hook, managed QEMU, and {searched_path_entries} PATH entr{}. {}",
                 if *searched_path_entries == 1 { "y" } else { "ies" },
                 self.remediation()
             ),
@@ -302,6 +302,7 @@ mod tests {
         env: HashMap<String, OsString>,
         path_entries: Vec<PathBuf>,
         files: HashSet<PathBuf>,
+        managed_qemu_system_path: Option<PathBuf>,
         os: String,
         arch: String,
         windows_major_version: Option<u32>,
@@ -313,6 +314,7 @@ mod tests {
                 env: HashMap::new(),
                 path_entries: Vec::new(),
                 files: HashSet::new(),
+                managed_qemu_system_path: None,
                 os: "windows".to_string(),
                 arch: "x86_64".to_string(),
                 windows_major_version: Some(11),
@@ -331,6 +333,11 @@ mod tests {
 
         fn with_file(mut self, path: impl Into<PathBuf>) -> Self {
             self.files.insert(path.into());
+            self
+        }
+
+        fn with_managed_qemu_system_path(mut self, path: impl Into<PathBuf>) -> Self {
+            self.managed_qemu_system_path = Some(path.into());
             self
         }
 
@@ -365,6 +372,10 @@ mod tests {
 
         fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
             Some(path.to_path_buf())
+        }
+
+        fn managed_qemu_system_path(&self, _data_dir: &Path) -> Option<PathBuf> {
+            self.managed_qemu_system_path.clone()
         }
 
         fn host_os(&self) -> String {
@@ -511,12 +522,15 @@ mod tests {
     fn discovery_prefers_lsb_qemu_over_config_and_path() {
         let env_path = PathBuf::from("/env/qemu-system-x86_64.exe");
         let config_path = PathBuf::from("/config/qemu-system-x86_64.exe");
+        let managed_path = PathBuf::from("/managed/qemu-system-x86_64.exe");
         let path_path = qemu_path();
         let host = FakeHost::windows()
             .with_env(LSB_QEMU_ENV, env_path.as_os_str().to_owned())
+            .with_managed_qemu_system_path(managed_path.clone())
             .with_path_entry(qemu_dir())
             .with_file(env_path.clone())
             .with_file(config_path.clone())
+            .with_file(managed_path)
             .with_file(path_path);
 
         let qemu = QemuDiscovery::new(&host)
@@ -531,7 +545,11 @@ mod tests {
     #[test]
     fn discovery_uses_config_before_path_when_env_absent() {
         let config_path = PathBuf::from("/config/qemu-system-x86_64.exe");
-        let host = working_host().with_file(config_path.clone());
+        let managed_path = PathBuf::from("/managed/qemu-system-x86_64.exe");
+        let host = working_host()
+            .with_managed_qemu_system_path(managed_path.clone())
+            .with_file(config_path.clone())
+            .with_file(managed_path);
 
         let qemu = QemuDiscovery::new(&host)
             .with_configured_qemu(config_path.clone())
@@ -540,6 +558,25 @@ mod tests {
 
         assert_eq!(qemu.source, QemuPathSource::Config);
         assert_eq!(qemu.path, config_path);
+    }
+
+    #[test]
+    fn discovery_uses_managed_before_path_when_env_and_config_absent() {
+        let managed_path = PathBuf::from("/managed/qemu-system-x86_64.exe");
+        let path_path = qemu_path();
+        let host = FakeHost::windows()
+            .with_managed_qemu_system_path(managed_path.clone())
+            .with_path_entry(qemu_dir())
+            .with_file(managed_path.clone())
+            .with_file(path_path);
+
+        let qemu = QemuDiscovery::new(&host)
+            .with_managed_data_dir("/data/lsb")
+            .discover()
+            .expect("managed path should win over PATH");
+
+        assert_eq!(qemu.source, QemuPathSource::Managed);
+        assert_eq!(qemu.path, managed_path);
     }
 
     #[test]
@@ -669,6 +706,25 @@ mod tests {
         assert_eq!(report.whpx.required_accelerator, PRODUCTION_ACCELERATOR);
         assert!(report.whpx.reported_by_qemu);
         assert!(report.whpx.limitation.contains("does not start a VM"));
+    }
+
+    #[test]
+    fn preflight_reports_managed_qemu_source() {
+        let path = PathBuf::from("/managed/qemu-system-x86_64.exe");
+        let host = FakeHost::windows()
+            .with_managed_qemu_system_path(path.clone())
+            .with_file(path.clone());
+        let runner = working_runner(&path);
+
+        let report = QemuPreflight::new(
+            QemuDiscovery::new(&host).with_managed_data_dir("/data/lsb"),
+            &runner,
+        )
+        .run()
+        .expect("managed preflight should pass");
+
+        assert_eq!(report.qemu.path, path);
+        assert_eq!(report.qemu.source, QemuPathSource::Managed);
     }
 
     #[test]

@@ -344,6 +344,7 @@ pub(crate) fn build_sandbox(
     nbd_uri: Option<&str>,
 ) -> Result<Sandbox> {
     let mut builder = Sandbox::builder()
+        .data_dir(&prepared.data_dir)
         .kernel(&prepared.kernel_path)
         .rootfs(&prepared.work_rootfs)
         .cpus(prepared.cpus)

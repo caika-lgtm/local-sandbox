@@ -29,6 +29,7 @@ $EnvAllowlist = @(
   "GITHUB_RUN_ATTEMPT",
   "GITHUB_REF_NAME",
   "LSB_QEMU",
+  "LSB_QEMU_IMG",
   "LSB_TEST_REAL_QEMU",
   "LSB_WINDOWS_INTEGRATION",
   "LSB_WINDOWS_BOOT_KERNEL",
@@ -467,11 +468,51 @@ function Write-JsonArtifact {
   Add-CollectedFile -Path $Path
 }
 
+function Get-ManagedQemuSummary {
+  $localAppData = [Environment]::GetEnvironmentVariable("LOCALAPPDATA")
+  if (-not $localAppData) {
+    return [ordered]@{
+      current_json = $null
+      status = "localappdata_unset"
+    }
+  }
+
+  $currentPath = Join-Path $localAppData "lsb\tools\qemu\current.json"
+  if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf)) {
+    return [ordered]@{
+      current_json = $currentPath
+      status = "missing"
+    }
+  }
+
+  try {
+    $current = Get-Content -Raw -LiteralPath $currentPath | ConvertFrom-Json
+    return [ordered]@{
+      current_json = $currentPath
+      status = "present"
+      package_version = $current.package_version
+      artifact_sha256 = $current.artifact_sha256
+      qemu_system_x86_64 = $current.qemu_system_x86_64
+      qemu_img = $current.qemu_img
+    }
+  } catch {
+    return [ordered]@{
+      current_json = $currentPath
+      status = "invalid"
+      error = Redact-Text -Text $_.Exception.Message
+    }
+  }
+}
+
 function Write-EnvironmentSummary {
   param(
     [Parameter(Mandatory = $true)]
     [string]$Path
   )
+
+  $managedQemu = Get-ManagedQemuSummary
+  $qemuSystemCommand = if ($managedQemu.status -eq "present") { $managedQemu.qemu_system_x86_64 } else { "qemu-system-x86_64" }
+  $qemuImgCommand = if ($managedQemu.status -eq "present") { $managedQemu.qemu_img } else { "qemu-img" }
 
   $summary = [ordered]@{
     schema_version = 1
@@ -484,13 +525,14 @@ function Write-EnvironmentSummary {
       processor_count = [Environment]::ProcessorCount
       powershell = $PSVersionTable.PSVersion.ToString()
     }
+    managed_qemu = $managedQemu
     environment = Get-AllowlistedEnvironment
     tools = [ordered]@{
       rustc = Invoke-SummaryCommand -Command "rustc" -Arguments @("--version")
       cargo = Invoke-SummaryCommand -Command "cargo" -Arguments @("--version")
       rustup = Invoke-SummaryCommand -Command "rustup" -Arguments @("show")
-      qemu_system_x86_64 = Invoke-SummaryCommand -Command "qemu-system-x86_64" -Arguments @("--version")
-      qemu_img = Invoke-SummaryCommand -Command "qemu-img" -Arguments @("--version")
+      qemu_system_x86_64 = Invoke-SummaryCommand -Command $qemuSystemCommand -Arguments @("--version")
+      qemu_img = Invoke-SummaryCommand -Command $qemuImgCommand -Arguments @("--version")
       node = Invoke-SummaryCommand -Command "node" -Arguments @("--version")
       npm = Invoke-SummaryCommand -Command "npm" -Arguments @("--version")
       cmake = Invoke-SummaryCommand -Command "cmake" -Arguments @("--version")

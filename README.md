@@ -11,9 +11,10 @@ packages, and run tools without touching your host.
 ## Requirements
 
 - macOS 14 (Sonoma) or later on Apple Silicon or Intel, or Windows 11 on x64.
-- Windows requires Windows Hypervisor Platform, `qemu-system-x86_64.exe`, and
-  `qemu-img.exe`. Set `LSB_QEMU` to the full QEMU executable path or put QEMU on
-  `PATH`. Production Windows runs require WHPX and do not fall back to TCG.
+- Windows requires Windows 11 x64 with Windows Hypervisor Platform enabled.
+  `lsb init` installs LocalSandbox-managed QEMU host tools under the user data
+  directory and production Windows runs require WHPX; they do not fall back to
+  TCG. `LSB_QEMU` and `LSB_QEMU_IMG` remain supported override/debug paths.
 - `cmake` is required when building from source because `lsb-proxy` links
   BoringSSL for upstream TLS.
 - Windows source builds require the Rust MSVC toolchain and native build tools.
@@ -33,9 +34,9 @@ irm https://raw.githubusercontent.com/LocalSandBox/local-sandbox/main/install.ps
 ```
 
 The shell installer also supports Windows x64 when run from Git Bash, MSYS2, or
-Cygwin. QEMU is not bundled with the CLI; install QEMU separately and make
-`qemu-system-x86_64.exe` and `qemu-img.exe` discoverable with `LSB_QEMU` or
-`PATH`. To update a Windows CLI install, rerun the PowerShell installer.
+Cygwin. QEMU is not bundled with the CLI archive; run `lsb init` after
+installation to download managed QEMU host tools and runtime assets. To update a
+Windows CLI install, rerun the PowerShell installer.
 
 Build the macOS CLI from source:
 
@@ -52,12 +53,14 @@ target\release\lsb.exe init
 ```
 
 `cargo build` only builds the CLI. Runtime assets are downloaded separately by
-`lsb init` and include `Image`, `initramfs.cpio.gz`, and `rootfs.ext4`.
-Windows uses its own released runtime asset package because the QEMU/WHPX guest
-path requires Windows-specific support such as virtio-serial. Building those
-assets from source on Windows is more involved; developers should normally
-download the released runtime assets instead of running the rootfs preparation
-pipeline locally.
+`lsb init` and include `Image`, `initramfs.cpio.gz`, and `rootfs.ext4`. On
+Windows, `lsb init` also installs managed QEMU host tools under
+`%LOCALAPPDATA%\lsb\tools\qemu` without mutating global `PATH`. Windows uses its
+own released runtime asset package because the QEMU/WHPX guest path requires
+Windows-specific support such as virtio-serial. Building those assets from
+source on Windows is more involved; developers should normally download the
+released runtime assets instead of running the rootfs preparation pipeline
+locally.
 
 ## Usage
 

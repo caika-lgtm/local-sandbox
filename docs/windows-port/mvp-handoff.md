@@ -20,7 +20,8 @@ It is the current status source for future agents.
 |---|---|
 | Host target | Windows 11 x64. Windows ARM64 is future work. |
 | VM backend | QEMU direct Linux boot with `-accel whpx`, `-cpu Westmere`, explicit devices, no display, no default NIC, and Windows Job Object cleanup. |
-| QEMU discovery | `LSB_QEMU`, internal config hook, then `PATH`; structured preflight errors for missing QEMU, invalid paths, version parse, and missing WHPX support. |
+| QEMU discovery | `LSB_QEMU`, internal config hook, managed QEMU, then `PATH`; structured preflight errors for missing QEMU, invalid paths, version parse, and missing WHPX support. |
+| Managed QEMU | `lsb init` installs the pinned Windows x86_64 QEMU package under `%LOCALAPPDATA%\lsb\tools\qemu`, validates artifact SHA-256, safe extraction, manifest executable paths, required notices, and writes `current.json`. |
 | Boot assets | Released Windows x64 runtime assets provide `Image`, `initramfs.cpio.gz`, and `rootfs.ext4` with the QEMU/WHPX guest requirements such as virtio-serial. Developers should use `lsb init`; self-hosted CI hydrates/caches assets and prepares disposable per-run rootfs copies. |
 | Control transport | `lsb-proto` over virtio-serial through private QEMU pipe chardevs. The host connects during boot because QEMU pipe chardev startup can block until a client connects. |
 | Readiness | Windows startup succeeds only after a valid LocalSandbox `GuestReady` frame over the established control stream. |
@@ -31,7 +32,7 @@ It is the current status source for future agents.
 | Networking | Default argv remains `-nic none`. Existing allow-net/proxy configuration attaches a QEMU stream netdev only to a LocalSandbox-owned loopback proxy path. |
 | Secrets | Guest environment values are placeholders. Host-side proxy policy performs substitution only for configured destinations. Diagnostics redact secret-bearing values. |
 | Checkpoints | Windows checkpoints use private per-instance qcow2 overlays and flattened qcow2 checkpoint artifacts plus JSON metadata. macOS CAS/NBD behavior is unchanged. |
-| CLI release/install | Release CI builds a Windows x64 CLI archive containing `lsb.exe`. `install.ps1` supports native PowerShell installs, and `install.sh` supports Git Bash/MSYS/Cygwin installs. QEMU is still discovered from `LSB_QEMU` or `PATH` rather than bundled. |
+| CLI release/install | Release CI builds a Windows x64 CLI archive containing `lsb.exe`. `install.ps1` supports native PowerShell installs, and `install.sh` supports Git Bash/MSYS/Cygwin installs. QEMU is not bundled in the CLI archive; `lsb init` installs the managed host-tool package. |
 | Node binding | Windows x64 package metadata and `x86_64-pc-windows-msvc` NAPI target wiring exist. Node `Sandbox.start()` surfaces Rust backend/preflight error chains. |
 | CI | Hosted Windows CI runs compile/unit/golden coverage without QEMU/WHPX. The self-hosted Windows 11 WHPX workflow runs e2e on trusted `main` pushes and supports manual check, unit, smoke, and e2e lanes. |
 | Diagnostics | QEMU argv, stdout/stderr, serial log, preflight, boot status, environment summary, and manifest are collected through a redacted diagnostic collector. |
@@ -39,7 +40,7 @@ It is the current status source for future agents.
 ## Intentional MVP limitations
 
 - No Windows ARM64 support.
-- No bundled QEMU or QEMU installer.
+- No QEMU bundled inside CLI archives, OS runtime assets, or npm packages.
 - No normal TCG fallback. Production Windows execution requires WHPX.
 - No direct writable host mounts on Windows.
 - No live host/guest mount synchronization, VirtioFS, 9p, SMB, or custom sync.
@@ -51,7 +52,7 @@ It is the current status source for future agents.
 - No CAS/NBD checkpoint parity on Windows.
 - Windows SDK `checkpoint()` stops the VM before flattening the active qcow2
   overlay into a checkpoint artifact. This is not live checkpointing.
-- No final QEMU minimum version policy.
+- Managed QEMU is pinned to QEMU 11.0.50 package `qemu-11.0.50-lsb0.4.0`; broader minimum-version policy for overrides remains future work.
 - No `lsb doctor windows` command yet, though preflight internals and
   diagnostics support that future command.
 - Native Windows build-number probing is deferred.
@@ -115,9 +116,9 @@ head.
 
 - Rerun self-hosted WHPX smoke at final branch head after diagnostics collector
   scoping changes.
-- Decide and document QEMU minimum supported version.
-- Decide whether to bundle/sign a known QEMU distribution in a later Windows
-  release.
+- Decide and document the support policy for user override QEMU versions.
+- Decide whether managed QEMU artifacts need additional signing or mirroring in
+  a later Windows release.
 - Add a Windows diagnostic command such as `lsb doctor windows`.
 - Decide dedicated self-hosted runner labels before adding more Windows runners
   with the default `self-hosted, Windows, X64` labels.
