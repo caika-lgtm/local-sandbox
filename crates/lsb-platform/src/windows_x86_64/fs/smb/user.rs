@@ -100,8 +100,18 @@ impl WindowsSmbUserManager for NativeWindowsSmbUserManager {
             ));
         }
 
-        let domain = local_computer_name()?;
+        let domain = match local_computer_name() {
+            Ok(domain) => domain,
+            Err(error) => {
+                let _ = delete_local_user(name);
+                return Err(error);
+            }
+        };
         let principal = format!(r"{domain}\{}", name.as_str());
+        if let Err(error) = add_user_to_builtin_users_group(&principal) {
+            let _ = delete_local_user(name);
+            return Err(error);
+        }
         Ok(WindowsSmbUserAccount {
             name: name.clone(),
             domain,
@@ -113,20 +123,156 @@ impl WindowsSmbUserManager for NativeWindowsSmbUserManager {
         &mut self,
         account: &WindowsSmbUserAccount,
     ) -> Result<(), WindowsSmbLifecycleError> {
-        use std::ptr;
-
-        use windows_sys::Win32::NetworkManagement::NetManagement::{NERR_UserNotFound, NetUserDel};
-
-        let name_w = wide_null(account.name.as_str());
-        let status = unsafe { NetUserDel(ptr::null(), name_w.as_ptr()) };
-        if status != 0 && status != NERR_UserNotFound {
-            return Err(WindowsSmbLifecycleError::operation_failed(
-                WindowsSmbLifecyclePhase::UserDelete,
-                format!("NetUserDel failed with status {status}"),
-            ));
-        }
-        Ok(())
+        delete_local_user(&account.name)
     }
+}
+
+#[cfg(windows)]
+fn add_user_to_builtin_users_group(principal: &str) -> Result<(), WindowsSmbLifecycleError> {
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::ERROR_MEMBER_IN_ALIAS;
+    use windows_sys::Win32::NetworkManagement::NetManagement::{
+        NERR_UserInGroup, NetLocalGroupAddMembers, LOCALGROUP_MEMBERS_INFO_3,
+    };
+
+    let group_name = builtin_users_group_name()?;
+    let group_name_w = wide_null(&group_name);
+    let mut principal_w = wide_null(principal);
+    let mut member = LOCALGROUP_MEMBERS_INFO_3 {
+        lgrmi3_domainandname: principal_w.as_mut_ptr(),
+    };
+    let status = unsafe {
+        NetLocalGroupAddMembers(
+            ptr::null(),
+            group_name_w.as_ptr(),
+            3,
+            &mut member as *mut LOCALGROUP_MEMBERS_INFO_3 as *const u8,
+            1,
+        )
+    };
+    if status != 0 && status != NERR_UserInGroup && status != ERROR_MEMBER_IN_ALIAS {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            format!(
+                "NetLocalGroupAddMembers failed with status {status} for local group {group_name}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn builtin_users_group_name() -> Result<String, WindowsSmbLifecycleError> {
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Security::{
+        CreateWellKnownSid, LookupAccountSidW, SidTypeAlias, SidTypeWellKnownGroup,
+        WinBuiltinUsersSid, SECURITY_MAX_SID_SIZE, SID_NAME_USE,
+    };
+
+    let mut sid_len = SECURITY_MAX_SID_SIZE;
+    let mut sid = vec![0u8; sid_len as usize];
+    let created = unsafe {
+        CreateWellKnownSid(
+            WinBuiltinUsersSid,
+            ptr::null_mut(),
+            sid.as_mut_ptr().cast(),
+            &mut sid_len,
+        )
+    };
+    if created == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            format!("CreateWellKnownSid(WinBuiltinUsersSid) failed with win32 error {code}"),
+        ));
+    }
+
+    let mut name_len = 0;
+    let mut domain_len = 0;
+    let mut sid_use: SID_NAME_USE = 0;
+    let sized = unsafe {
+        LookupAccountSidW(
+            ptr::null(),
+            sid.as_mut_ptr().cast(),
+            ptr::null_mut(),
+            &mut name_len,
+            ptr::null_mut(),
+            &mut domain_len,
+            &mut sid_use,
+        )
+    };
+    if sized != 0 {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            "LookupAccountSidW unexpectedly succeeded without buffers",
+        ));
+    }
+    let code = unsafe { GetLastError() };
+    if code != ERROR_INSUFFICIENT_BUFFER {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            format!("LookupAccountSidW failed to size builtin Users alias: win32 error {code}"),
+        ));
+    }
+
+    let mut name = vec![0u16; name_len as usize];
+    let mut domain = vec![0u16; domain_len as usize];
+    let looked_up = unsafe {
+        LookupAccountSidW(
+            ptr::null(),
+            sid.as_mut_ptr().cast(),
+            name.as_mut_ptr(),
+            &mut name_len,
+            domain.as_mut_ptr(),
+            &mut domain_len,
+            &mut sid_use,
+        )
+    };
+    if looked_up == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            format!("LookupAccountSidW failed for builtin Users alias: win32 error {code}"),
+        ));
+    }
+    if sid_use != SidTypeAlias && sid_use != SidTypeWellKnownGroup {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            format!("builtin Users SID resolved to unexpected account type {sid_use}"),
+        ));
+    }
+
+    name.truncate(name_len as usize);
+    while name.last() == Some(&0) {
+        name.pop();
+    }
+    if name.is_empty() {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserGroupAdd,
+            "builtin Users alias resolved to an empty name",
+        ));
+    }
+    Ok(String::from_utf16_lossy(&name))
+}
+
+#[cfg(windows)]
+fn delete_local_user(name: &WindowsSmbUserName) -> Result<(), WindowsSmbLifecycleError> {
+    use std::ptr;
+
+    use windows_sys::Win32::NetworkManagement::NetManagement::{NERR_UserNotFound, NetUserDel};
+
+    let name_w = wide_null(name.as_str());
+    let status = unsafe { NetUserDel(ptr::null(), name_w.as_ptr()) };
+    if status != 0 && status != NERR_UserNotFound {
+        return Err(WindowsSmbLifecycleError::operation_failed(
+            WindowsSmbLifecyclePhase::UserDelete,
+            format!("NetUserDel failed with status {status}"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
