@@ -1,0 +1,31 @@
+docs/windows-port/agent-workspace/validation.md
+  s_686182ffe192bd::t_2a5a657f830e63 122-125
+docs/windows-port/agent-workspace/diagnostics.md
+  s_686182ffe192bd::t_807fabb752cab9 117-121,124-125,276
+docs/windows-port/agent-workspace/state.md
+  s_686182ffe192bd::t_e4f21d03c86fc0 7,55-56,146
+.github/workflows/windows-lsb-hardware.yml
+  s_686182ffe192bd::t_7741c6144c4f00 57-60,112-122
+  s_686182ffe192bd::t_cbb62fcf0d4a53 123
+scripts/collect-windows-diagnostics.ps1
+  s_686182ffe192bd::t_1a4bd5c87b7c41 526,531-532,535-545
+docs/windows-port/agent-workspace/milestones/15-ci-diagnostics-hardening.md
+  s_686182ffe192bd::t_c24d6dd8f93251 46,72-73
+  s_686182ffe192bd::t_bfd2f4db82441f 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b4c9b36c7277beb23e3edce8f8fa6024959e6dca",
+  "prompts": {},
+  "sessions": {
+    "s_686182ffe192bd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3299-8bfe-78d0-8d81-a918039c0f92",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Codex <codex-agent@users.noreply.github.com>"
+    }
+  }
+}
