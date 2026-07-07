@@ -38,6 +38,9 @@ mod control_transport {
                 ready
                     .capabilities
                     .push(lsb_proto::CAP_CIFS_MOUNT.to_string());
+                ready
+                    .capabilities
+                    .push(lsb_proto::CAP_SESSION_MUX.to_string());
                 Some(ready)
             }
         }
@@ -110,7 +113,8 @@ mod control_transport {
                 [
                     lsb_proto::CAP_FILE_RANGE_IO,
                     lsb_proto::CAP_PORT_FORWARD,
-                    lsb_proto::CAP_CIFS_MOUNT
+                    lsb_proto::CAP_CIFS_MOUNT,
+                    lsb_proto::CAP_SESSION_MUX
                 ]
             );
         }
@@ -677,18 +681,20 @@ mod smb_mount {
 #[cfg(target_os = "linux")]
 mod guest {
     use std::fs::{File, OpenOptions};
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::net::TcpListener;
     use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
     use std::os::unix::process::CommandExt;
     use std::path::Path;
     use std::process::{Command, Stdio};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     use super::control_transport::{self, GuestControlTransport};
     use super::file_transfer;
     use super::smb_mount;
     use lsb_proto::frame;
+    use lsb_proto::{mux, mux::MuxFrame};
     use lsb_proto::{
         ChmodRequest, CopyRequest, DirEntry, ExecRequest, ForwardRequest, ForwardResponse,
         FsOkResponse, MkdirRequest, MountRequest, MountResponse, ReadDirRequest, ReadDirResponse,
@@ -697,7 +703,7 @@ mod guest {
     };
     use lsb_proto::{VSOCK_PORT, VSOCK_PORT_FORWARD};
 
-    trait ControlStream: Read + Write + AsRawFd + IntoRawFd + Send + 'static {
+    trait PhysicalControlStream: Read + Write + AsRawFd + IntoRawFd + Send + 'static {
         fn try_clone_stream(&self) -> std::io::Result<Self>
         where
             Self: Sized;
@@ -705,7 +711,7 @@ mod guest {
         fn configure_for_lsb(&self) {}
     }
 
-    impl ControlStream for std::net::TcpStream {
+    impl PhysicalControlStream for std::net::TcpStream {
         fn try_clone_stream(&self) -> std::io::Result<Self> {
             self.try_clone()
         }
@@ -715,7 +721,7 @@ mod guest {
         }
     }
 
-    impl ControlStream for File {
+    impl PhysicalControlStream for File {
         fn try_clone_stream(&self) -> std::io::Result<Self> {
             self.try_clone()
         }
@@ -1229,7 +1235,7 @@ mod guest {
 
     fn handle_control_stream<S>(stream: S, ready_message: Option<lsb_proto::GuestReady>)
     where
-        S: ControlStream,
+        S: PhysicalControlStream,
     {
         stream.configure_for_lsb();
         let mut reader = match stream.try_clone_stream() {
@@ -1307,7 +1313,8 @@ mod guest {
                             continue;
                         }
                     };
-                    handle_watch(&req, writer);
+                    let control_raw = writer.as_raw_fd();
+                    handle_watch(&req, writer, move || control_fd_hung_up(control_raw));
                     return;
                 }
                 frame::READ_FILE_REQ => {
@@ -1411,6 +1418,206 @@ mod guest {
                 }
                 _ => {} // unknown type, skip
             }
+        }
+    }
+
+    fn handle_mux_virtual_session(session: MuxVirtualSession) {
+        let mut reader = session.clone();
+        let mut writer = session;
+
+        loop {
+            let (msg_type, payload) = match frame::read_frame(&mut reader) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => return,
+                Err(err) => {
+                    eprintln!("lsb-guest: mux virtual session read failed: {}", err);
+                    return;
+                }
+            };
+
+            if handle_simple_control_frame(msg_type, &payload, &mut reader, &mut writer) {
+                continue;
+            }
+
+            match msg_type {
+                frame::EXEC_REQ => {
+                    let req: ExecRequest = match serde_json::from_slice(&payload) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let msg = format!("invalid exec request: {}", e);
+                            let _ = frame::write_frame(&mut writer, frame::ERROR, msg.as_bytes());
+                            continue;
+                        }
+                    };
+
+                    if req.argv.is_empty() {
+                        let _ = frame::write_frame(&mut writer, frame::ERROR, b"empty argv");
+                        continue;
+                    }
+
+                    if req.tty.unwrap_or(false) {
+                        let _ = frame::write_frame(
+                            &mut writer,
+                            frame::ERROR,
+                            b"tty exec is not supported over virtio-serial mux",
+                        );
+                        return;
+                    }
+
+                    handle_piped_exec(&req, reader, writer);
+                    return;
+                }
+                frame::WATCH_REQ => {
+                    let req: WatchRequest = match serde_json::from_slice(&payload) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let msg = format!("invalid watch request: {}", e);
+                            let _ = frame::write_frame(&mut writer, frame::ERROR, msg.as_bytes());
+                            continue;
+                        }
+                    };
+                    let close_watcher = writer.clone();
+                    handle_watch(&req, writer, move || close_watcher.is_remote_closed());
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn handle_simple_control_frame<R, W>(
+        msg_type: u8,
+        payload: &[u8],
+        reader: &mut R,
+        writer: &mut W,
+    ) -> bool
+    where
+        R: Read,
+        W: Write,
+    {
+        match msg_type {
+            frame::MOUNT_REQ => {
+                let mount_req: MountRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid mount request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                let resp = process_mount(&mount_req);
+                let _ = frame::send_json(writer, frame::MOUNT_RESP, &resp);
+                true
+            }
+            frame::READ_FILE_REQ => {
+                let req: ReadFileRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid read_file request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_read_file(&req, writer);
+                true
+            }
+            frame::WRITE_FILE_REQ => {
+                let req: WriteFileRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid write_file request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_write_file(&req, reader, writer);
+                true
+            }
+            frame::MKDIR_REQ => {
+                let req: MkdirRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid mkdir request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_mkdir(&req, writer);
+                true
+            }
+            frame::READ_DIR_REQ => {
+                let req: ReadDirRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid read_dir request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_read_dir(&req, writer);
+                true
+            }
+            frame::STAT_REQ => {
+                let req: StatRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid stat request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_stat(&req, writer);
+                true
+            }
+            frame::REMOVE_REQ => {
+                let req: RemoveRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid remove request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_remove(&req, writer);
+                true
+            }
+            frame::RENAME_REQ => {
+                let req: RenameRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid rename request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_rename(&req, writer);
+                true
+            }
+            frame::COPY_REQ => {
+                let req: CopyRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid copy request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_copy(&req, writer);
+                true
+            }
+            frame::CHMOD_REQ => {
+                let req: ChmodRequest = match serde_json::from_slice(payload) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("invalid chmod request: {}", e);
+                        let _ = frame::write_frame(writer, frame::ERROR, msg.as_bytes());
+                        return true;
+                    }
+                };
+                handle_chmod(&req, writer);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1654,9 +1861,10 @@ mod guest {
         }
     }
 
-    fn handle_piped_exec<S>(req: &ExecRequest, control_reader: S, control_writer: S)
+    fn handle_piped_exec<R, W>(req: &ExecRequest, control_reader: R, control_writer: W)
     where
-        S: ControlStream,
+        R: Read + Send + 'static,
+        W: Write + Send + 'static,
     {
         let mut cmd = Command::new(&req.argv[0]);
         if req.argv.len() > 1 {
@@ -1787,9 +1995,10 @@ mod guest {
         }
     }
 
-    fn handle_watch<S>(req: &WatchRequest, mut writer: S)
+    fn handle_watch<S, F>(req: &WatchRequest, mut writer: S, mut should_stop: F)
     where
-        S: ControlStream,
+        S: Write,
+        F: FnMut() -> bool,
     {
         use std::collections::HashMap;
         use std::ffi::CString;
@@ -1843,7 +2052,6 @@ mod guest {
 
         add_watches(inotify_fd, &req.path, mask, &mut wd_to_path, req.recursive);
 
-        let control_raw = writer.as_raw_fd();
         let mut buf = [0u8; 4096];
 
         loop {
@@ -1920,19 +2128,750 @@ mod guest {
                 }
             }
 
-            // Check if vsock peer hung up (host closed connection = stop watching)
-            let mut vfds = [libc::pollfd {
-                fd: control_raw,
-                events: 0,
-                revents: 0,
-            }];
-            unsafe { libc::poll(vfds.as_mut_ptr(), 1, 0) };
-            if vfds[0].revents & libc::POLLHUP != 0 {
+            if should_stop() {
                 break;
             }
         }
 
         unsafe { libc::close(inotify_fd) };
+    }
+
+    fn control_fd_hung_up(fd: RawFd) -> bool {
+        let mut fds = [libc::pollfd {
+            fd,
+            events: 0,
+            revents: 0,
+        }];
+        unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+        fds[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+    }
+
+    const MUX_SESSION_RECEIVE_QUEUE_BYTES: usize = 256 * 1024;
+    const MUX_SESSION_SEND_QUEUE_BYTES: usize = 256 * 1024;
+    const MAX_MUX_CONTROL_QUEUE_FRAMES: usize = 128;
+
+    #[derive(Debug)]
+    struct GuestMux {
+        inner: Arc<GuestMuxInner>,
+    }
+
+    impl GuestMux {
+        fn start<R, W>(reader: R, writer: W) -> Self
+        where
+            R: Read + Send + 'static,
+            W: Write + Send + 'static,
+        {
+            let mux = Self {
+                inner: Arc::new(GuestMuxInner::new()),
+            };
+
+            let read_inner = Arc::clone(&mux.inner);
+            std::thread::Builder::new()
+                .name("lsb-guest-mux-reader".to_string())
+                .spawn(move || guest_mux_read_loop(read_inner, reader))
+                .expect("failed to spawn guest mux reader thread");
+
+            let write_inner = Arc::clone(&mux.inner);
+            std::thread::Builder::new()
+                .name("lsb-guest-mux-writer".to_string())
+                .spawn(move || guest_mux_write_loop(write_inner, writer))
+                .expect("failed to spawn guest mux writer thread");
+
+            mux
+        }
+
+        fn accept_session(&self) -> Option<MuxVirtualSession> {
+            self.inner.accept_session()
+        }
+    }
+
+    #[derive(Debug)]
+    struct GuestMuxInner {
+        state: Mutex<GuestMuxState>,
+        cv: Condvar,
+    }
+
+    impl GuestMuxInner {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(GuestMuxState::new()),
+                cv: Condvar::new(),
+            }
+        }
+
+        fn accept_session(self: &Arc<Self>) -> Option<MuxVirtualSession> {
+            let mut state = self.state.lock().expect("guest mux state lock poisoned");
+            loop {
+                if state.failed.is_some() {
+                    return None;
+                }
+
+                if let Some(session_id) = state.accepted_sessions.pop_front() {
+                    if state.sessions.contains_key(&session_id) {
+                        return Some(MuxVirtualSession::new(Arc::clone(self), session_id));
+                    }
+                }
+
+                state = self.cv.wait(state).expect("guest mux state lock poisoned");
+            }
+        }
+
+        fn close_session(&self, session_id: u64) {
+            let mut state = self.state.lock().expect("guest mux state lock poisoned");
+            if state.failed.is_some() {
+                return;
+            }
+
+            let Some(session) = state.sessions.get_mut(&session_id) else {
+                return;
+            };
+            if session.local_fin {
+                return;
+            }
+
+            session.local_fin = true;
+            if !session.scheduled {
+                session.scheduled = true;
+                state.ready_sessions.push_back(session_id);
+            }
+            self.cv.notify_all();
+        }
+
+        fn fail(&self, reason: String) {
+            let mut state = self.state.lock().expect("guest mux state lock poisoned");
+            state.fail(reason);
+            self.cv.notify_all();
+        }
+    }
+
+    #[derive(Debug)]
+    struct GuestMuxState {
+        sessions: std::collections::HashMap<u64, GuestMuxSessionState>,
+        control_queue: std::collections::VecDeque<MuxFrame>,
+        ready_sessions: std::collections::VecDeque<u64>,
+        accepted_sessions: std::collections::VecDeque<u64>,
+        failed: Option<String>,
+    }
+
+    impl GuestMuxState {
+        fn new() -> Self {
+            Self {
+                sessions: std::collections::HashMap::new(),
+                control_queue: std::collections::VecDeque::new(),
+                ready_sessions: std::collections::VecDeque::new(),
+                accepted_sessions: std::collections::VecDeque::new(),
+                failed: None,
+            }
+        }
+
+        fn fail(&mut self, reason: String) {
+            if self.failed.is_some() {
+                return;
+            }
+            for session in self.sessions.values_mut() {
+                session.reset_reason = Some(reason.clone());
+            }
+            self.control_queue.clear();
+            self.ready_sessions.clear();
+            self.accepted_sessions.clear();
+            self.failed = Some(reason);
+        }
+    }
+
+    #[derive(Debug)]
+    struct GuestMuxSessionState {
+        inbound: std::collections::VecDeque<u8>,
+        outbound: std::collections::VecDeque<Vec<u8>>,
+        outbound_bytes: usize,
+        send_credit: usize,
+        remote_fin: bool,
+        local_fin: bool,
+        fin_sent: bool,
+        reset_reason: Option<String>,
+        scheduled: bool,
+    }
+
+    impl GuestMuxSessionState {
+        fn new() -> Self {
+            Self {
+                inbound: std::collections::VecDeque::new(),
+                outbound: std::collections::VecDeque::new(),
+                outbound_bytes: 0,
+                send_credit: 0,
+                remote_fin: false,
+                local_fin: false,
+                fin_sent: false,
+                reset_reason: None,
+                scheduled: false,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct MuxVirtualSession {
+        handle: Arc<MuxVirtualSessionHandle>,
+    }
+
+    impl MuxVirtualSession {
+        fn new(mux: Arc<GuestMuxInner>, session_id: u64) -> Self {
+            Self {
+                handle: Arc::new(MuxVirtualSessionHandle { mux, session_id }),
+            }
+        }
+
+        fn is_remote_closed(&self) -> bool {
+            let state = match self.handle.mux.state.lock() {
+                Ok(state) => state,
+                Err(_) => return true,
+            };
+            if state.failed.is_some() {
+                return true;
+            }
+            let Some(session) = state.sessions.get(&self.handle.session_id) else {
+                return true;
+            };
+            session.remote_fin || session.reset_reason.is_some()
+        }
+    }
+
+    #[derive(Debug)]
+    struct MuxVirtualSessionHandle {
+        mux: Arc<GuestMuxInner>,
+        session_id: u64,
+    }
+
+    impl Drop for MuxVirtualSessionHandle {
+        fn drop(&mut self) {
+            self.mux.close_session(self.session_id);
+        }
+    }
+
+    impl Read for MuxVirtualSession {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+
+            let mux = &self.handle.mux;
+            let session_id = self.handle.session_id;
+            let mut state = mux.state.lock().map_err(|_| mux_poisoned_lock())?;
+
+            loop {
+                if let Some(reason) = state.failed.clone() {
+                    return Err(mux_broken_pipe(reason));
+                }
+
+                let mut copied = 0usize;
+                {
+                    let session = state
+                        .sessions
+                        .get_mut(&session_id)
+                        .ok_or_else(|| mux_broken_pipe("mux session no longer exists"))?;
+
+                    if let Some(reason) = session.reset_reason.clone() {
+                        return Err(mux_connection_reset(reason));
+                    }
+
+                    while copied < buf.len() {
+                        let Some(byte) = session.inbound.pop_front() else {
+                            break;
+                        };
+                        buf[copied] = byte;
+                        copied += 1;
+                    }
+
+                    if copied == 0 && session.remote_fin {
+                        return Ok(0);
+                    }
+                }
+
+                if copied > 0 {
+                    let credit = u32::try_from(copied).map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "mux read credit exceeds u32 window range",
+                        )
+                    })?;
+                    state = guest_mux_wait_for_control_capacity(mux, state)?;
+                    state
+                        .control_queue
+                        .push_back(MuxFrame::Window { session_id, credit });
+                    mux.cv.notify_all();
+                    return Ok(copied);
+                }
+
+                state = mux.cv.wait(state).map_err(|_| mux_poisoned_lock())?;
+            }
+        }
+    }
+
+    impl Write for MuxVirtualSession {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+
+            let mux = &self.handle.mux;
+            let session_id = self.handle.session_id;
+            let mut state = mux.state.lock().map_err(|_| mux_poisoned_lock())?;
+
+            loop {
+                if let Some(reason) = state.failed.clone() {
+                    return Err(mux_broken_pipe(reason));
+                }
+
+                let mut should_schedule = false;
+                let writable = {
+                    let session = state
+                        .sessions
+                        .get_mut(&session_id)
+                        .ok_or_else(|| mux_broken_pipe("mux session no longer exists"))?;
+
+                    if let Some(reason) = session.reset_reason.clone() {
+                        return Err(mux_connection_reset(reason));
+                    }
+                    if session.local_fin {
+                        return Err(mux_broken_pipe("mux session local side is closed"));
+                    }
+                    if session.remote_fin {
+                        return Err(mux_broken_pipe("mux session remote side is closed"));
+                    }
+
+                    let available_queue =
+                        MUX_SESSION_SEND_QUEUE_BYTES.saturating_sub(session.outbound_bytes);
+                    let writable = buf
+                        .len()
+                        .min(mux::MAX_DATA_LEN)
+                        .min(session.send_credit)
+                        .min(available_queue);
+
+                    if writable > 0 {
+                        session.outbound.push_back(buf[..writable].to_vec());
+                        session.outbound_bytes += writable;
+                        session.send_credit -= writable;
+                        if !session.scheduled {
+                            session.scheduled = true;
+                            should_schedule = true;
+                        }
+                    }
+
+                    writable
+                };
+
+                if writable > 0 {
+                    if should_schedule {
+                        state.ready_sessions.push_back(session_id);
+                    }
+                    mux.cv.notify_all();
+                    return Ok(writable);
+                }
+
+                state = mux.cv.wait(state).map_err(|_| mux_poisoned_lock())?;
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            let mux = &self.handle.mux;
+            let session_id = self.handle.session_id;
+            let mut state = mux.state.lock().map_err(|_| mux_poisoned_lock())?;
+
+            loop {
+                if let Some(reason) = state.failed.clone() {
+                    return Err(mux_broken_pipe(reason));
+                }
+
+                let session = state
+                    .sessions
+                    .get(&session_id)
+                    .ok_or_else(|| mux_broken_pipe("mux session no longer exists"))?;
+
+                if let Some(reason) = session.reset_reason.clone() {
+                    return Err(mux_connection_reset(reason));
+                }
+                if session.outbound_bytes == 0 {
+                    return Ok(());
+                }
+
+                state = mux.cv.wait(state).map_err(|_| mux_poisoned_lock())?;
+            }
+        }
+    }
+
+    fn guest_mux_read_loop<R>(inner: Arc<GuestMuxInner>, mut reader: R)
+    where
+        R: Read,
+    {
+        loop {
+            let mux_frame = match frame::read_frame(&mut reader) {
+                Ok(Some((frame_type, payload))) => match mux::decode_frame(frame_type, &payload) {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        inner.fail(format!("invalid mux frame received from host: {error}"));
+                        return;
+                    }
+                },
+                Ok(None) => {
+                    inner.fail("virtio-serial mux physical control stream reached EOF".to_string());
+                    return;
+                }
+                Err(error) => {
+                    inner.fail(format!(
+                        "failed to read virtio-serial mux physical control stream: {error}"
+                    ));
+                    return;
+                }
+            };
+
+            if let Err(reason) = guest_mux_handle_incoming_frame(&inner, mux_frame) {
+                inner.fail(reason);
+                return;
+            }
+        }
+    }
+
+    fn guest_mux_write_loop<W>(inner: Arc<GuestMuxInner>, mut writer: W)
+    where
+        W: Write,
+    {
+        while let Some(mux_frame) = guest_mux_next_outgoing_frame(&inner) {
+            let (frame_type, payload) = match mux::encode_frame(&mux_frame) {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    inner.fail(format!("failed to encode mux frame: {error}"));
+                    return;
+                }
+            };
+
+            if let Err(error) = frame::write_frame(&mut writer, frame_type, &payload) {
+                inner.fail(format!(
+                    "failed to write virtio-serial mux physical control stream: {error}"
+                ));
+                return;
+            }
+        }
+    }
+
+    fn guest_mux_next_outgoing_frame(inner: &GuestMuxInner) -> Option<MuxFrame> {
+        let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+        loop {
+            if state.failed.is_some() {
+                return None;
+            }
+
+            if let Some(frame) = state.control_queue.pop_front() {
+                inner.cv.notify_all();
+                return Some(frame);
+            }
+
+            while let Some(session_id) = state.ready_sessions.pop_front() {
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    continue;
+                };
+
+                if let Some(bytes) = session.outbound.pop_front() {
+                    session.outbound_bytes = session.outbound_bytes.saturating_sub(bytes.len());
+                    if session.outbound.is_empty() && !(session.local_fin && !session.fin_sent) {
+                        session.scheduled = false;
+                    } else {
+                        state.ready_sessions.push_back(session_id);
+                    }
+                    inner.cv.notify_all();
+                    return Some(MuxFrame::Data { session_id, bytes });
+                }
+
+                if session.local_fin && !session.fin_sent {
+                    session.fin_sent = true;
+                    session.scheduled = false;
+                    inner.cv.notify_all();
+                    return Some(MuxFrame::Fin { session_id });
+                }
+
+                session.scheduled = false;
+            }
+
+            state = inner.cv.wait(state).expect("guest mux state lock poisoned");
+        }
+    }
+
+    fn guest_mux_handle_incoming_frame(
+        inner: &GuestMuxInner,
+        mux_frame: MuxFrame,
+    ) -> Result<(), String> {
+        match mux_frame {
+            MuxFrame::Open {
+                session_id,
+                metadata,
+            } => {
+                mux::validate_host_session_id(session_id).map_err(|error| error.to_string())?;
+                let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+                if state.sessions.contains_key(&session_id) {
+                    return Err(format!("host opened duplicate mux session {session_id}"));
+                }
+                if state.control_queue.len() >= MAX_MUX_CONTROL_QUEUE_FRAMES {
+                    return Err(format!(
+                        "mux control queue was full while accepting session {session_id}"
+                    ));
+                }
+
+                if !guest_mux_metadata_supported(&metadata) {
+                    state.control_queue.push_back(MuxFrame::OpenErr {
+                        session_id,
+                        reason: "unsupported mux session kind".to_string(),
+                    });
+                    inner.cv.notify_all();
+                    return Ok(());
+                }
+
+                state
+                    .sessions
+                    .insert(session_id, GuestMuxSessionState::new());
+                state.control_queue.push_back(MuxFrame::OpenOk {
+                    session_id,
+                    initial_credit: MUX_SESSION_RECEIVE_QUEUE_BYTES as u32,
+                });
+                state.accepted_sessions.push_back(session_id);
+                inner.cv.notify_all();
+                Ok(())
+            }
+            MuxFrame::OpenOk { .. } | MuxFrame::OpenErr { .. } => {
+                Err("host sent an unexpected mux session-open response".to_string())
+            }
+            MuxFrame::Data { session_id, bytes } => {
+                mux::validate_host_session_id(session_id).map_err(|error| error.to_string())?;
+                let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+                let session = state.sessions.get_mut(&session_id).ok_or_else(|| {
+                    format!(
+                        "host sent {} bytes for unknown mux session {session_id}",
+                        bytes.len()
+                    )
+                })?;
+                let available =
+                    MUX_SESSION_RECEIVE_QUEUE_BYTES.saturating_sub(session.inbound.len());
+                if bytes.len() > available {
+                    return Err(format!(
+                        "host exceeded mux receive credit for session {session_id}: {} bytes with {available} bytes available",
+                        bytes.len()
+                    ));
+                }
+                session.inbound.extend(bytes);
+                inner.cv.notify_all();
+                Ok(())
+            }
+            MuxFrame::Window { session_id, credit } => {
+                mux::validate_host_session_id(session_id).map_err(|error| error.to_string())?;
+                let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+                let session = state.sessions.get_mut(&session_id).ok_or_else(|| {
+                    format!("host granted credit for unknown mux session {session_id}")
+                })?;
+                session.send_credit = session
+                    .send_credit
+                    .checked_add(credit as usize)
+                    .ok_or_else(|| format!("mux session {session_id} send credit overflow"))?;
+                inner.cv.notify_all();
+                Ok(())
+            }
+            MuxFrame::Fin { session_id } => {
+                mux::validate_host_session_id(session_id).map_err(|error| error.to_string())?;
+                let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+                let session = state
+                    .sessions
+                    .get_mut(&session_id)
+                    .ok_or_else(|| format!("host closed unknown mux session {session_id}"))?;
+                session.remote_fin = true;
+                inner.cv.notify_all();
+                Ok(())
+            }
+            MuxFrame::Rst { session_id, reason } => {
+                mux::validate_host_session_id(session_id).map_err(|error| error.to_string())?;
+                let mut state = inner.state.lock().expect("guest mux state lock poisoned");
+                let session = state.sessions.get_mut(&session_id).ok_or_else(|| {
+                    format!("host reset unknown mux session {session_id}: {reason}")
+                })?;
+                session.reset_reason = Some(reason);
+                inner.cv.notify_all();
+                Ok(())
+            }
+        }
+    }
+
+    fn guest_mux_metadata_supported(metadata: &[u8]) -> bool {
+        matches!(metadata, b"exec" | b"watch" | b"file")
+    }
+
+    fn guest_mux_wait_for_control_capacity<'a>(
+        inner: &'a GuestMuxInner,
+        mut state: std::sync::MutexGuard<'a, GuestMuxState>,
+    ) -> io::Result<std::sync::MutexGuard<'a, GuestMuxState>> {
+        while state.control_queue.len() >= MAX_MUX_CONTROL_QUEUE_FRAMES {
+            if let Some(reason) = state.failed.clone() {
+                return Err(mux_broken_pipe(reason));
+            }
+            state = inner.cv.wait(state).map_err(|_| mux_poisoned_lock())?;
+        }
+        Ok(state)
+    }
+
+    fn mux_poisoned_lock() -> io::Error {
+        io::Error::other("guest mux state lock poisoned")
+    }
+
+    fn mux_broken_pipe(reason: impl Into<String>) -> io::Error {
+        io::Error::new(io::ErrorKind::BrokenPipe, reason.into())
+    }
+
+    fn mux_connection_reset(reason: impl Into<String>) -> io::Error {
+        io::Error::new(io::ErrorKind::ConnectionReset, reason.into())
+    }
+
+    #[cfg(test)]
+    mod mux_tests {
+        use super::*;
+        use std::sync::mpsc::{self, Receiver, SyncSender};
+
+        struct ChannelReader {
+            rx: Receiver<u8>,
+        }
+
+        struct ChannelWriter {
+            tx: SyncSender<u8>,
+        }
+
+        impl Read for ChannelReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if buf.is_empty() {
+                    return Ok(0);
+                }
+
+                match self.rx.recv() {
+                    Ok(byte) => {
+                        buf[0] = byte;
+                        let mut read = 1usize;
+                        while read < buf.len() {
+                            match self.rx.try_recv() {
+                                Ok(byte) => {
+                                    buf[read] = byte;
+                                    read += 1;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        Ok(read)
+                    }
+                    Err(_) => Ok(0),
+                }
+            }
+        }
+
+        impl Write for ChannelWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                for byte in buf {
+                    self.tx
+                        .send(*byte)
+                        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "peer closed"))?;
+                }
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct Endpoint {
+            reader: ChannelReader,
+            writer: ChannelWriter,
+        }
+
+        fn channel_pair(capacity: usize) -> (Endpoint, Endpoint) {
+            let (host_tx, peer_rx) = mpsc::sync_channel(capacity);
+            let (peer_tx, host_rx) = mpsc::sync_channel(capacity);
+            (
+                Endpoint {
+                    reader: ChannelReader { rx: host_rx },
+                    writer: ChannelWriter { tx: host_tx },
+                },
+                Endpoint {
+                    reader: ChannelReader { rx: peer_rx },
+                    writer: ChannelWriter { tx: peer_tx },
+                },
+            )
+        }
+
+        fn read_mux(reader: &mut impl Read) -> MuxFrame {
+            let (frame_type, payload) = frame::read_frame(reader)
+                .expect("physical frame should read")
+                .expect("physical frame should be present");
+            mux::decode_frame(frame_type, &payload).expect("mux frame should decode")
+        }
+
+        fn write_mux(writer: &mut impl Write, mux_frame: MuxFrame) {
+            let (frame_type, payload) =
+                mux::encode_frame(&mux_frame).expect("mux frame should encode");
+            frame::write_frame(writer, frame_type, &payload).expect("mux frame should write");
+        }
+
+        #[test]
+        fn guest_mux_accepts_host_session_and_exchanges_bytes() {
+            let (guest, mut host) = channel_pair(512 * 1024);
+            let mux = GuestMux::start(guest.reader, guest.writer);
+            let session_id = 1;
+
+            write_mux(
+                &mut host.writer,
+                MuxFrame::Open {
+                    session_id,
+                    metadata: b"exec".to_vec(),
+                },
+            );
+
+            match read_mux(&mut host.reader) {
+                MuxFrame::OpenOk {
+                    session_id: opened,
+                    initial_credit,
+                } => {
+                    assert_eq!(opened, session_id);
+                    assert_eq!(initial_credit, MUX_SESSION_RECEIVE_QUEUE_BYTES as u32);
+                }
+                frame => panic!("unexpected mux frame while waiting for open ok: {frame:?}"),
+            }
+
+            let mut session = mux.accept_session().expect("session should be accepted");
+
+            write_mux(
+                &mut host.writer,
+                MuxFrame::Window {
+                    session_id,
+                    credit: 1024,
+                },
+            );
+            write_mux(
+                &mut host.writer,
+                MuxFrame::Data {
+                    session_id,
+                    bytes: b"host-to-guest".to_vec(),
+                },
+            );
+
+            let mut inbound = vec![0; "host-to-guest".len()];
+            session.read_exact(&mut inbound).unwrap();
+            assert_eq!(inbound, b"host-to-guest");
+
+            session.write_all(b"guest-to-host").unwrap();
+
+            loop {
+                match read_mux(&mut host.reader) {
+                    MuxFrame::Data {
+                        session_id: id,
+                        bytes,
+                    } if id == session_id => {
+                        assert_eq!(bytes, b"guest-to-host");
+                        break;
+                    }
+                    MuxFrame::Window { .. } => {}
+                    frame => panic!("unexpected mux frame while waiting for data: {frame:?}"),
+                }
+            }
+        }
     }
 
     fn handle_tty_exec(vsock_fd: i32, req: &ExecRequest) {
@@ -2332,6 +3271,44 @@ mod guest {
         open_virtio_serial_stream(lsb_proto::VIRTIO_SERIAL_FORWARD_PORT_NAME, "forward")
     }
 
+    fn handle_virtio_serial_control_stream<S>(stream: S)
+    where
+        S: PhysicalControlStream,
+    {
+        stream.configure_for_lsb();
+        let reader = match stream.try_clone_stream() {
+            Ok(reader) => reader,
+            Err(err) => {
+                eprintln!("lsb-guest: failed to clone virtio-serial control stream: {err}");
+                return;
+            }
+        };
+        let mut writer = stream;
+
+        let Some(ready) =
+            control_transport::ready_message_for_transport(GuestControlTransport::VirtioSerial)
+        else {
+            eprintln!("lsb-guest: missing virtio-serial guest ready payload");
+            return;
+        };
+
+        if let Err(err) = frame::send_json(&mut writer, frame::GUEST_READY, &ready) {
+            eprintln!("lsb-guest: failed to send guest ready handshake: {err}");
+            return;
+        }
+        eprintln!(
+            "lsb-guest: sent raw guest ready handshake over {:?} with protocol version {}",
+            ready.transport, ready.protocol_version
+        );
+
+        let mux = GuestMux::start(reader, writer);
+        while let Some(session) = mux.accept_session() {
+            std::thread::spawn(move || {
+                handle_mux_virtual_session(session);
+            });
+        }
+    }
+
     fn run_virtio_serial_control_loop() -> ! {
         eprintln!(
             "lsb-guest: using virtio-serial control transport '{}'",
@@ -2342,10 +3319,7 @@ mod guest {
 
         loop {
             let stream = open_virtio_serial_control_stream();
-            handle_control_stream(
-                stream,
-                control_transport::ready_message_for_transport(GuestControlTransport::VirtioSerial),
-            );
+            handle_virtio_serial_control_stream(stream);
             eprintln!("lsb-guest: virtio-serial control stream closed; reopening");
             reap_zombies();
         }
@@ -2373,7 +3347,7 @@ mod guest {
 
     fn handle_virtio_serial_forward_stream<S>(stream: S)
     where
-        S: ControlStream,
+        S: PhysicalControlStream,
     {
         stream.configure_for_lsb();
         let mut reader = match stream.try_clone_stream() {
@@ -2551,7 +3525,7 @@ mod guest {
         mut tcp_read: std::net::TcpStream,
         mut writer: S,
     ) where
-        S: ControlStream,
+        S: Write,
     {
         let mut buffer = [0u8; 16 * 1024];
         loop {
