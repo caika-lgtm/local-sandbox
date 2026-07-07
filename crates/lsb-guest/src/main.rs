@@ -2033,44 +2033,12 @@ mod guest {
             Ok(mut child) => {
                 let child_pid = child.id() as i32;
 
-                enum ExecOutput {
-                    Frame(u8, Vec<u8>),
-                    Exit(i32),
-                }
-
-                // Channel serializes all frame writes to prevent interleaving.
-                // EXIT is an explicit terminal message so inherited stdout/stderr
-                // handles in grandchildren cannot keep the mux session open forever.
-                let (tx, rx) = std::sync::mpsc::channel::<ExecOutput>();
+                let frame_writer = Arc::new(Mutex::new(ExecFrameWriter::new(control_writer)));
                 let (output_done_tx, output_done_rx) = std::sync::mpsc::channel::<()>();
-
-                // Writer thread: drains channel, writes frames to vsock
-                let mut frame_writer = control_writer;
-                let writer_thread = std::thread::spawn(move || {
-                    for output in rx {
-                        match output {
-                            ExecOutput::Frame(frame_type, payload) => {
-                                if frame::write_frame(&mut frame_writer, frame_type, &payload)
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            ExecOutput::Exit(exit_code) => {
-                                let _ = frame::write_frame(
-                                    &mut frame_writer,
-                                    frame::EXIT,
-                                    &frame::exit_payload(exit_code),
-                                );
-                                break;
-                            }
-                        }
-                    }
-                });
 
                 // Thread: child stdout -> STDOUT frames
                 let child_stdout = child.stdout.take().unwrap();
-                let tx_stdout = tx.clone();
+                let stdout_writer = Arc::clone(&frame_writer);
                 let stdout_done = output_done_tx.clone();
                 let stdout_thread = std::thread::spawn(move || {
                     let mut stdout = child_stdout;
@@ -2079,11 +2047,13 @@ mod guest {
                         match stdout.read(&mut buf) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
-                                if tx_stdout
-                                    .send(ExecOutput::Frame(frame::STDOUT, buf[..n].to_vec()))
-                                    .is_err()
-                                {
-                                    break;
+                                match write_exec_output_frame(
+                                    &stdout_writer,
+                                    frame::STDOUT,
+                                    &buf[..n],
+                                ) {
+                                    Ok(true) => {}
+                                    Ok(false) | Err(_) => break,
                                 }
                             }
                         }
@@ -2093,7 +2063,7 @@ mod guest {
 
                 // Thread: child stderr -> STDERR frames
                 let child_stderr = child.stderr.take().unwrap();
-                let tx_stderr = tx.clone();
+                let stderr_writer = Arc::clone(&frame_writer);
                 let stderr_done = output_done_tx.clone();
                 let stderr_thread = std::thread::spawn(move || {
                     let mut stderr = child_stderr;
@@ -2102,11 +2072,13 @@ mod guest {
                         match stderr.read(&mut buf) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
-                                if tx_stderr
-                                    .send(ExecOutput::Frame(frame::STDERR, buf[..n].to_vec()))
-                                    .is_err()
-                                {
-                                    break;
+                                match write_exec_output_frame(
+                                    &stderr_writer,
+                                    frame::STDERR,
+                                    &buf[..n],
+                                ) {
+                                    Ok(true) => {}
+                                    Ok(false) | Err(_) => break,
                                 }
                             }
                         }
@@ -2164,9 +2136,7 @@ mod guest {
                     }
                 }
 
-                let _ = tx.send(ExecOutput::Exit(exit_code));
-                drop(tx);
-                let _ = writer_thread.join();
+                let _ = write_exec_exit_frame(&frame_writer, exit_code);
                 if drained_outputs == 2 {
                     let _ = stdout_thread.join();
                     let _ = stderr_thread.join();
@@ -2181,6 +2151,67 @@ mod guest {
                 let _ = frame::write_frame(&mut w, frame::ERROR, msg.as_bytes());
             }
         }
+    }
+
+    struct ExecFrameWriter<W> {
+        writer: Option<W>,
+        closed: bool,
+    }
+
+    impl<W> ExecFrameWriter<W> {
+        fn new(writer: W) -> Self {
+            Self {
+                writer: Some(writer),
+                closed: false,
+            }
+        }
+    }
+
+    fn write_exec_output_frame<W>(
+        writer: &Arc<Mutex<ExecFrameWriter<W>>>,
+        frame_type: u8,
+        payload: &[u8],
+    ) -> io::Result<bool>
+    where
+        W: Write,
+    {
+        let mut state = writer
+            .lock()
+            .map_err(|_| io::Error::other("exec frame writer lock poisoned"))?;
+        if state.closed {
+            return Ok(false);
+        }
+        let Some(frame_writer) = state.writer.as_mut() else {
+            state.closed = true;
+            return Ok(false);
+        };
+        let result = frame::write_frame(frame_writer, frame_type, payload);
+        if result.is_err() {
+            state.closed = true;
+            state.writer.take();
+        }
+        result.map(|_| true)
+    }
+
+    fn write_exec_exit_frame<W>(
+        writer: &Arc<Mutex<ExecFrameWriter<W>>>,
+        exit_code: i32,
+    ) -> io::Result<()>
+    where
+        W: Write,
+    {
+        let mut state = writer
+            .lock()
+            .map_err(|_| io::Error::other("exec frame writer lock poisoned"))?;
+        state.closed = true;
+        let Some(mut frame_writer) = state.writer.take() else {
+            return Ok(());
+        };
+        frame::write_frame(
+            &mut frame_writer,
+            frame::EXIT,
+            &frame::exit_payload(exit_code),
+        )
     }
 
     #[cfg(test)]
@@ -2540,6 +2571,19 @@ mod guest {
             self.accepted_sessions.clear();
             self.failed = Some(reason);
         }
+
+        fn prune_drained_session(&mut self, session_id: u64) {
+            if self
+                .sessions
+                .get(&session_id)
+                .is_some_and(GuestMuxSessionState::is_drained)
+            {
+                self.sessions.remove(&session_id);
+                self.ready_sessions.retain(|queued| *queued != session_id);
+                self.accepted_sessions
+                    .retain(|queued| *queued != session_id);
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -2568,6 +2612,15 @@ mod guest {
                 reset_reason: None,
                 scheduled: false,
             }
+        }
+
+        fn is_drained(&self) -> bool {
+            self.local_fin
+                && self.fin_sent
+                && self.remote_fin
+                && self.inbound.is_empty()
+                && self.outbound.is_empty()
+                && self.outbound_bytes == 0
         }
     }
 
@@ -2626,6 +2679,7 @@ mod guest {
                 }
 
                 let mut copied = 0usize;
+                let mut remote_fin_without_data = false;
                 {
                     let session = state
                         .sessions
@@ -2645,8 +2699,14 @@ mod guest {
                     }
 
                     if copied == 0 && session.remote_fin {
-                        return Ok(0);
+                        remote_fin_without_data = true;
                     }
+                }
+
+                if remote_fin_without_data {
+                    state.prune_drained_session(session_id);
+                    mux.cv.notify_all();
+                    return Ok(0);
                 }
 
                 if copied > 0 {
@@ -2846,6 +2906,9 @@ mod guest {
                 if session.local_fin && !session.fin_sent {
                     session.fin_sent = true;
                     session.scheduled = false;
+                    if session.is_drained() {
+                        state.prune_drained_session(session_id);
+                    }
                     inner.cv.notify_all();
                     return Some(MuxFrame::Fin { session_id });
                 }
@@ -2942,6 +3005,7 @@ mod guest {
                     .get_mut(&session_id)
                     .ok_or_else(|| format!("host closed unknown mux session {session_id}"))?;
                 session.remote_fin = true;
+                state.prune_drained_session(session_id);
                 inner.cv.notify_all();
                 Ok(())
             }
@@ -2991,6 +3055,7 @@ mod guest {
     mod mux_tests {
         use super::*;
         use std::sync::mpsc::{self, Receiver, SyncSender};
+        use std::time::{Duration, Instant};
 
         struct ChannelReader {
             rx: Receiver<u8>,
@@ -3074,6 +3139,28 @@ mod guest {
             frame::write_frame(writer, frame_type, &payload).expect("mux frame should write");
         }
 
+        fn wait_for_session_pruned(mux: &GuestMux, session_id: u64) {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                let pruned = {
+                    let state = mux
+                        .inner
+                        .state
+                        .lock()
+                        .expect("guest mux state lock should not be poisoned");
+                    !state.sessions.contains_key(&session_id)
+                };
+                if pruned {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "guest mux session {session_id} was not pruned"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
         #[test]
         fn guest_mux_accepts_host_session_and_exchanges_bytes() {
             let (guest, mut host) = channel_pair(512 * 1024);
@@ -3135,6 +3222,39 @@ mod guest {
                     frame => panic!("unexpected mux frame while waiting for data: {frame:?}"),
                 }
             }
+        }
+
+        #[test]
+        fn guest_mux_prunes_sessions_after_both_sides_fin() {
+            let (guest, mut host) = channel_pair(512 * 1024);
+            let mux = GuestMux::start(guest.reader, guest.writer);
+            let session_id = 1;
+
+            write_mux(
+                &mut host.writer,
+                MuxFrame::Open {
+                    session_id,
+                    metadata: b"file".to_vec(),
+                },
+            );
+            match read_mux(&mut host.reader) {
+                MuxFrame::OpenOk {
+                    session_id: opened, ..
+                } => assert_eq!(opened, session_id),
+                frame => panic!("unexpected mux frame while waiting for open ok: {frame:?}"),
+            }
+
+            let session = mux.accept_session().expect("session should be accepted");
+            drop(session);
+            match read_mux(&mut host.reader) {
+                MuxFrame::Fin {
+                    session_id: fin_session,
+                } => assert_eq!(fin_session, session_id),
+                frame => panic!("unexpected mux frame while waiting for guest fin: {frame:?}"),
+            }
+
+            write_mux(&mut host.writer, MuxFrame::Fin { session_id });
+            wait_for_session_pruned(&mux, session_id);
         }
     }
 

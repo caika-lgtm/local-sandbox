@@ -188,6 +188,10 @@ impl Read for MuxSession {
             }
 
             if session.remote_fin {
+                if session.is_drained() {
+                    state.prune_drained_session(session_id);
+                    inner.cv.notify_all();
+                }
                 return Ok(0);
             }
 
@@ -499,6 +503,17 @@ impl MuxManagerState {
         self.ready_sessions.clear();
         self.failed = Some(reason);
     }
+
+    fn prune_drained_session(&mut self, session_id: u64) {
+        if self
+            .sessions
+            .get(&session_id)
+            .is_some_and(SessionState::is_drained)
+        {
+            self.sessions.remove(&session_id);
+            self.ready_sessions.retain(|queued| *queued != session_id);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -529,6 +544,15 @@ impl SessionState {
             reset_reason: None,
             scheduled: false,
         }
+    }
+
+    fn is_drained(&self) -> bool {
+        self.local_fin
+            && self.fin_sent
+            && self.remote_fin
+            && self.inbound.is_empty()
+            && self.outbound.is_empty()
+            && self.outbound_bytes == 0
     }
 }
 
@@ -624,6 +648,9 @@ fn next_outgoing_frame(inner: &MuxManagerInner) -> Option<MuxFrame> {
             if session.local_fin && !session.fin_sent {
                 session.fin_sent = true;
                 session.scheduled = false;
+                if session.is_drained() {
+                    state.prune_drained_session(session_id);
+                }
                 inner.cv.notify_all();
                 return Some(MuxFrame::Fin { session_id });
             }
@@ -747,6 +774,7 @@ fn handle_incoming_frame(inner: &MuxManagerInner, frame: MuxFrame) -> Result<(),
                 .get_mut(&session_id)
                 .ok_or_else(|| format!("guest closed unknown mux session {session_id}"))?;
             session.remote_fin = true;
+            state.prune_drained_session(session_id);
             inner.cv.notify_all();
             Ok(())
         }
@@ -907,6 +935,28 @@ mod tests {
             },
         );
         session_id
+    }
+
+    fn wait_for_session_pruned(manager: &MuxManager, session_id: u64) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let pruned = {
+                let state = manager
+                    .inner
+                    .state
+                    .lock()
+                    .expect("Windows mux state lock should not be poisoned");
+                !state.sessions.contains_key(&session_id)
+            };
+            if pruned {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "mux session {session_id} was not pruned"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -1174,6 +1224,38 @@ mod tests {
             }
             frame => panic!("unexpected mux frame while waiting for data: {frame:?}"),
         }
+    }
+
+    #[test]
+    fn closed_sessions_are_pruned_after_both_sides_fin() {
+        let (host, mut peer) = channel_pair(512 * 1024);
+        let manager = MuxManager::start_for_test(host.reader, host.writer);
+
+        let open = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.open_session(MuxSessionKind::File).unwrap())
+        };
+        let session_id = accept_open(
+            &mut peer.reader,
+            &mut peer.writer,
+            MuxSessionKind::File,
+            1024,
+        );
+        let session = open.join().expect("open session thread should finish");
+
+        drop(session);
+        loop {
+            match read_mux(&mut peer.reader) {
+                MuxFrame::Fin {
+                    session_id: fin_session,
+                } if fin_session == session_id => break,
+                MuxFrame::Window { .. } => {}
+                frame => panic!("unexpected mux frame while waiting for host fin: {frame:?}"),
+            }
+        }
+
+        write_mux(&mut peer.writer, MuxFrame::Fin { session_id });
+        wait_for_session_pruned(&manager, session_id);
     }
 
     #[test]

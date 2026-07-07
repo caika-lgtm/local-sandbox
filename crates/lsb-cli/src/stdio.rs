@@ -486,17 +486,18 @@ pub(crate) fn run_stdio(prepared: &PreparedVm) -> Result<i32> {
 
                 bg_threads.push(std::thread::spawn(move || {
                     let argv: Vec<&str> = params.argv.iter().map(|s| s.as_str()).collect();
-                    let stream = match sb.open_exec(&argv, &spawn_env, params.cwd.as_deref()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("lsb: spawn failed: {}", e);
-                            let _ = tx.send(Event::Exit {
-                                pid: pid_clone,
-                                code: 1,
-                            });
-                            return;
-                        }
-                    };
+                    let stream =
+                        match sb.open_exec_session(&argv, &spawn_env, params.cwd.as_deref()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("lsb: spawn failed: {}", e);
+                                let _ = tx.send(Event::Exit {
+                                    pid: pid_clone,
+                                    code: 1,
+                                });
+                                return;
+                            }
+                        };
 
                     let mut vsock_reader = match stream.try_clone() {
                         Ok(r) => r,
@@ -508,7 +509,7 @@ pub(crate) fn run_stdio(prepared: &PreparedVm) -> Result<i32> {
                     // Returns vsock_writer so it isn't dropped before the read
                     // loop finishes — on Apple vsock, dropping the original fd
                     // closes the entire connection even if a dup'd reader exists.
-                    let input_thread = std::thread::spawn(move || -> std::net::TcpStream {
+                    let input_thread = std::thread::spawn(move || {
                         for msg in input_rx {
                             match msg {
                                 ProcessInput::Stdin(data) => {
@@ -633,7 +634,7 @@ pub(crate) fn run_stdio(prepared: &PreparedVm) -> Result<i32> {
                 let recursive = params.recursive;
 
                 bg_threads.push(std::thread::spawn(move || {
-                    let stream = match sb.open_watch(&path, recursive) {
+                    let stream = match sb.open_watch_session(&path, recursive) {
                         Ok(s) => s,
                         Err(e) => {
                             eprintln!("lsb: watch failed: {}", e);

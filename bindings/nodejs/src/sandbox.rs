@@ -155,7 +155,7 @@ impl Sandbox {
         .await
         .map_err(to_napi_error)?;
       return Ok(WatchStream {
-        receiver: Arc::new(tokio::sync::Mutex::new(watch.into_events())),
+        handle: Arc::new(tokio::sync::Mutex::new(watch)),
       });
     }
 

@@ -51,8 +51,7 @@ impl AsyncGenerator for ByteStream {
 #[cfg_attr(not(lsb_nodejs_supported), napi)]
 pub struct WatchStream {
   #[cfg(lsb_nodejs_supported)]
-  pub(crate) receiver:
-    Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<anyhow::Result<lsb_sdk::WatchEvent>>>>,
+  pub(crate) handle: Arc<tokio::sync::Mutex<lsb_sdk::WatchHandle>>,
 }
 
 #[cfg(lsb_nodejs_supported)]
@@ -65,10 +64,10 @@ impl AsyncGenerator for WatchStream {
     &mut self,
     _value: Option<Self::Next>,
   ) -> impl std::future::Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
-    let receiver = self.receiver.clone();
+    let handle = self.handle.clone();
     async move {
-      let mut receiver = receiver.lock().await;
-      match receiver.recv().await {
+      let mut handle = handle.lock().await;
+      match handle.next().await {
         Some(Ok(event)) => Ok(Some(FileChangeEvent {
           path: event.path,
           event: event.event,

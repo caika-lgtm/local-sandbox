@@ -17,23 +17,30 @@ use crate::WatchEvent;
 
 /// Handle to a file watch stream in the VM.
 pub struct WatchHandle {
-    events_rx: mpsc::UnboundedReceiver<Result<WatchEvent>>,
+    events_rx: Option<mpsc::UnboundedReceiver<Result<WatchEvent>>>,
+    cancel_session: Option<BoxedControlSession>,
 }
 
 impl WatchHandle {
     pub async fn next(&mut self) -> Option<Result<WatchEvent>> {
-        self.events_rx.recv().await
+        self.events_rx.as_mut()?.recv().await
     }
 
-    pub fn into_events(self) -> mpsc::UnboundedReceiver<Result<WatchEvent>> {
+    pub fn into_events(mut self) -> mpsc::UnboundedReceiver<Result<WatchEvent>> {
+        self.cancel_session.take();
         self.events_rx
+            .take()
+            .expect("watch event receiver should be present")
     }
 
     #[cfg(all(test, target_os = "windows", target_arch = "x86_64"))]
     pub(crate) fn try_next(
         &mut self,
     ) -> std::result::Result<Option<Result<WatchEvent>>, mpsc::error::TryRecvError> {
-        match self.events_rx.try_recv() {
+        let Some(events_rx) = self.events_rx.as_mut() else {
+            return Err(mpsc::error::TryRecvError::Disconnected);
+        };
+        match events_rx.try_recv() {
             Ok(event) => Ok(Some(event)),
             Err(mpsc::error::TryRecvError::Empty) => Ok(None),
             Err(error) => Err(error),
@@ -41,8 +48,17 @@ impl WatchHandle {
     }
 }
 
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        if let Some(mut session) = self.cancel_session.take() {
+            let _ = session.close_session();
+        }
+    }
+}
+
 pub(crate) fn spawn_watch_thread(stream: BoxedControlSession) -> WatchHandle {
     let (events_tx, events_rx) = mpsc::unbounded_channel();
+    let cancel_session = stream.try_clone_session().ok();
 
     let _ = std::thread::Builder::new()
         .name("lsb-watch".into())
@@ -71,7 +87,10 @@ pub(crate) fn spawn_watch_thread(stream: BoxedControlSession) -> WatchHandle {
             }
         });
 
-    WatchHandle { events_rx }
+    WatchHandle {
+        events_rx: Some(events_rx),
+        cancel_session,
+    }
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
@@ -118,13 +137,21 @@ where
             }
         });
 
-    WatchHandle { events_rx }
+    WatchHandle {
+        events_rx: Some(events_rx),
+        cancel_session: None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
     use crate::session::test_support::memory_session_pair;
+    use crate::session::ControlSession;
 
     #[test]
     fn watch_forwards_watch_event_frames() {
@@ -148,5 +175,54 @@ mod tests {
             .expect("watch event should parse");
         assert_eq!(event.path, "/tmp/file.txt");
         assert_eq!(event.event, "modify");
+    }
+
+    #[derive(Clone)]
+    struct CloseTrackingSession {
+        closes: Arc<AtomicUsize>,
+    }
+
+    impl Read for CloseTrackingSession {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+
+    impl Write for CloseTrackingSession {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ControlSession for CloseTrackingSession {
+        fn try_clone_session(&self) -> io::Result<BoxedControlSession> {
+            Ok(Box::new(self.clone()))
+        }
+
+        fn close_session(&mut self) -> io::Result<()> {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn reset_session(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dropping_watch_handle_closes_control_session() {
+        let closes = Arc::new(AtomicUsize::new(0));
+        let session = CloseTrackingSession {
+            closes: Arc::clone(&closes),
+        };
+        let handle = spawn_watch_thread(Box::new(session));
+
+        drop(handle);
+
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
     }
 }
