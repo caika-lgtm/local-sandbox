@@ -2189,7 +2189,8 @@ mod tests {
                 [
                     lsb_proto::CAP_FILE_RANGE_IO.to_string(),
                     lsb_proto::CAP_PORT_FORWARD.to_string(),
-                    lsb_proto::CAP_CIFS_MOUNT.to_string()
+                    lsb_proto::CAP_CIFS_MOUNT.to_string(),
+                    lsb_proto::CAP_SESSION_MUX.to_string()
                 ]
             );
             let status = fs::read_to_string(&boot.artifacts().boot_status)
