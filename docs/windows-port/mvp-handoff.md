@@ -1,6 +1,6 @@
 # Windows Port MVP Handoff
 
-Last updated: 2026-07-06
+Last updated: 2026-07-07
 
 ## Summary
 
@@ -10,6 +10,8 @@ and public LocalSandbox API shape while replacing the macOS Apple
 Virtualization.framework backend with a supervised QEMU process. Release
 packaging now includes Windows x64 CLI install artifacts and the Windows x64
 Node package, plus Windows x64 runtime assets for the QEMU/WHPX guest path.
+Post-MVP mux, streaming spawn, guest watch, and direct SMB watch work has also
+landed on this branch without changing public CLI, Rust SDK, or Node API shape.
 
 This handoff replaces the completed sprint workspace and milestone prompt files.
 It is the current status source for future agents.
@@ -23,19 +25,20 @@ It is the current status source for future agents.
 | QEMU discovery | `LSB_QEMU`, internal config hook, managed QEMU, then `PATH`; structured preflight errors for missing QEMU, invalid paths, version parse, and missing WHPX support. |
 | Managed QEMU | `lsb init` installs the pinned Windows x86_64 QEMU package under `%LOCALAPPDATA%\lsb\tools\qemu`, validates artifact SHA-256, safe extraction, manifest executable paths, required notices, and writes `current.json`. |
 | Boot assets | Released Windows x64 runtime assets provide `Image`, `initramfs.cpio.gz`, and `rootfs.ext4` with the QEMU/WHPX guest requirements such as virtio-serial. Developers should use `lsb init`; self-hosted CI hydrates/caches assets and prepares disposable per-run rootfs copies. |
-| Control transport | `lsb-proto` over virtio-serial through private QEMU pipe chardevs. The host connects during boot because QEMU pipe chardev startup can block until a client connects. |
+| Control transport | `lsb-proto` over virtio-serial through private QEMU pipe chardevs. The host connects during boot because QEMU pipe chardev startup can block until a client connects. After the raw `GuestReady` frame advertises `CAP_SESSION_MUX`, a Windows mux manager owns the physical control stream and opens virtual exec, watch, and file sessions. |
 | Readiness | Windows startup succeeds only after a valid LocalSandbox `GuestReady` frame over the established control stream. |
-| Exec | Non-interactive `exec` works through the existing product API and returns stdout, stderr, and exit status. |
+| Exec and spawn | Non-interactive `exec` works through the existing product API and returns stdout, stderr, and exit status. Streaming spawn runs over mux exec sessions and supports stdout, stderr, exit status, cwd, stdin writes, kill, concurrent processes, and large-output fairness. |
 | File transfer | Copy-in/copy-out helpers stream guest file content over the control path with validation for path traversal, chunk sizes, final byte counts, and overwrite behavior. |
 | Mounts | Windows overlay-style mounts are snapshot imports for CLI no-suffix and `:ro`; explicit direct mounts use SMB/CIFS with ephemeral users, shares, credentials, ACL grants, and cleanup manifests. |
+| Watch | Public SDK and Node watch support uses guest-side inotify over mux sessions for normal guest paths and overlay/import paths. Direct SMB mount paths use a host-side Windows directory watcher with guest path mapping. |
 | Port forwarding | Host-to-guest forwarding uses a dedicated private virtio-serial channel and host listeners bound to `127.0.0.1`. It does not enable a guest NIC or QEMU `hostfwd`. |
 | Networking | Default argv remains `-nic none`. Existing allow-net/proxy configuration attaches a QEMU stream netdev only to a LocalSandbox-owned loopback proxy path. |
 | Secrets | Guest environment values are placeholders. Host-side proxy policy performs substitution only for configured destinations. Diagnostics redact secret-bearing values. |
 | Checkpoints | Windows checkpoints use private per-instance qcow2 overlays and flattened qcow2 checkpoint artifacts plus JSON metadata. macOS CAS/NBD behavior is unchanged. |
 | CLI release/install | Release CI builds a Windows x64 CLI archive containing `lsb.exe`. `install.ps1` supports native PowerShell installs, and `install.sh` supports Git Bash/MSYS/Cygwin installs. After CLI installation, `lsb init` installs the managed QEMU host-tool package. |
-| Node binding | Windows x64 package metadata and `x86_64-pc-windows-msvc` NAPI target wiring exist. Node `Sandbox.start()` surfaces Rust backend/preflight error chains. |
-| CI | Hosted Windows CI runs compile/unit/golden coverage without QEMU/WHPX. The self-hosted Windows 11 WHPX workflow runs e2e on trusted `main` pushes and supports manual check, unit, smoke, and e2e lanes. |
-| Diagnostics | QEMU argv, stdout/stderr, serial log, preflight, boot status, environment summary, and manifest are collected through a redacted diagnostic collector. |
+| Node binding | Windows x64 package metadata and `x86_64-pc-windows-msvc` NAPI target wiring exist. Node `Sandbox.start()` surfaces Rust backend/preflight error chains. Node streaming spawn and watch run through the same public API as macOS. |
+| CI | Hosted Windows CI runs compile/unit/golden coverage without QEMU/WHPX. The self-hosted Windows 11 WHPX workflow runs e2e on trusted `main` pushes and supports manual check, unit, smoke, and e2e lanes, including mux spawn/watch and direct SMB watch smoke coverage. |
+| Diagnostics | QEMU argv, stdout/stderr, serial log, preflight, boot status, environment summary, manifest, and redacted control/proxy artifacts are collected through a redacted diagnostic collector. |
 
 ## Intentional MVP limitations
 
@@ -43,13 +46,15 @@ It is the current status source for future agents.
 - No QEMU bundled inside CLI archives, OS runtime assets, or npm packages.
 - No normal TCG fallback. Production Windows execution requires WHPX.
 - No live host/guest mount synchronization for overlay, no-suffix, or CLI `:ro`
-  mounts. SMB/CIFS direct mounts are the supported live-sharing path and require
-  Administrator privileges.
-- No file `watch` support for live host changes on imported mounts.
-- No interactive shell or streaming `spawn`/kill on Windows.
-- No general mux/session model yet. Non-interactive exec and file transfer are
-  serialized on the control stream; port forwarding uses a separate forwarding
-  channel and currently serializes active forwarding sessions.
+  mounts. Watch on those paths observes the guest staging view; later
+  host-originated source changes are not live-synced. SMB/CIFS direct mounts
+  are the supported live-sharing path and require Administrator privileges.
+- No interactive shell or PTY support on Windows.
+- Port forwarding uses a separate forwarding channel, not the session mux, and
+  currently serializes active forwarding sessions.
+- Direct SMB watch is supported only for public SDK and Node watch paths at or
+  below one direct SMB target. A recursive watch above a direct SMB mount target
+  returns a precise unsupported error instead of partial hybrid coverage.
 - No CAS/NBD checkpoint parity on Windows.
 - Windows SDK `checkpoint()` stops the VM before flattening the active qcow2
   overlay into a checkpoint artifact. This is not live checkpointing.
@@ -82,6 +87,15 @@ unchanged:
 - LocalSandbox writes a non-secret cleanup manifest into the instance directory
   after resources are prepared. Normal cleanup removes the manifest; stale
   startup recovery scans manifests and retries share, ACL, and user cleanup.
+- SDK and Node `watch()` calls at or below one direct SMB target use a
+  host-side `ReadDirectoryChangesW` watcher on the canonical source path and map
+  events back to guest paths. Host-created, modified, renamed, and deleted files
+  are reported; guest writes through CIFS are also reported after they
+  materialize on the host filesystem. Read-only direct mounts can be watched for
+  host-originated changes while guest writes remain denied.
+- Recursive watch roots that would span guest-only paths and one or more direct
+  SMB targets are rejected. Start one watch per direct target plus any
+  guest-only watches needed.
 
 ## Important implementation notes
 
@@ -96,6 +110,11 @@ unchanged:
 - The control pipe must be connected during boot. A self-hosted M06 run showed
   QEMU pipe chardev startup can block guest boot until the host connects; see
   D021.
+- Session mux startup preserves the raw `GuestReady` handshake. Once
+  `CAP_SESSION_MUX` is advertised, the Windows mux manager owns the established
+  physical control pipe; later exec, file, mount init, and guest-side watch
+  operations use virtual sessions. Do not reintroduce independent physical
+  readers on the control pipe.
 - Mount import validation is conservative: traversal, reparse points,
   symlinks/junctions, hardlinks, special files, case-insensitive collisions, and
   plan-to-open replacement are rejected or fail closed.
@@ -111,6 +130,10 @@ unchanged:
   allowed Host/SNI-to-arbitrary-IP traffic fail closed.
 - Windows checkpoint save writes metadata only after `qemu-img convert` succeeds
   and refuses same-name `.qcow2`, `.json`, `.idx`, or `.ext4` conflicts.
+- Direct SMB watch path resolution is owned by the SDK runtime registry. It uses
+  longest matching guest-target prefixes with path-boundary checks, then starts
+  host watchers only for configured direct SMB source paths. Guest paths are
+  never accepted as raw host paths.
 
 ## Validation evidence
 
@@ -131,15 +154,20 @@ Key self-hosted WHPX evidence from the MVP sprint:
 | M15 packed package smoke | Smoke run `28743977168` passed packed root + Windows optional npm package import and runtime smokes; artifact `8092721984`. |
 | CLI e2e workflow | E2E run `28771975549` passed the user-facing Windows CLI workflow covering boot/exec, no-network denial, mounts, port forwarding, scoped host exposure, and checkpoint operations. |
 
-The last full WHPX smoke pass, run `28743977168`, happened before later
-diagnostics scoping follow-up commits. Before treating the branch as fully
-current for upstream review, rerun `./scripts/win-gh-test smoke` at final branch
-head.
+Post-mux validation coverage is now wired into the durable smoke lane:
+
+| Area | Current smoke coverage |
+|---|---|
+| Mux spawn and guest watch | `scripts/windows-smoke.ps1` runs `windows_qemu_spawn_guest_watch_smoke`, covering concurrent spawn, stdout/stderr/exit/cwd/stdin/kill, large-output fairness, recursive guest watch events, and watch/spawn coexistence. |
+| Node streaming | `scripts/windows-smoke.ps1` runs `bindings/nodejs/test/streaming.spec.ts` against disposable Windows runtime assets, covering positive Node spawn and watch behavior. |
+| Direct SMB watch | `windows_qemu_direct_smb_mount_smoke` covers host-originated direct SMB watch events, guest-originated CIFS writes observed by the host watcher, read-only direct SMB host watch events, write denial on read-only mounts, and mount-only proxy egress denial. |
+
+Record the exact final WHPX workflow run and artifact IDs in the PR or release
+evidence for the branch under review; keep this file focused on durable support
+status and lane scope.
 
 ## Open production-readiness gaps
 
-- Rerun self-hosted WHPX smoke at final branch head after diagnostics collector
-  scoping and direct SMB smoke coverage changes.
 - Decide and document the support policy for user override QEMU versions.
 - Decide whether managed QEMU artifacts need additional signing or mirroring in
   a later Windows release.
@@ -147,8 +175,11 @@ head.
   need a single umbrella command.
 - Decide dedicated self-hosted runner labels before adding more Windows runners
   with the default `self-hosted, Windows, X64` labels.
-- Define the mux/session model before enabling Windows interactive shell,
-  streaming spawn, kill, watch, or concurrent forwarding sessions.
+- Decide whether to add Windows interactive shell/PTY support over the mux.
+- Decide whether to migrate port forwarding onto the mux or otherwise support
+  concurrent forwarding sessions without the current serialization.
+- Decide whether to add a hybrid watch aggregator for recursive watches that
+  span guest-only paths and direct SMB targets.
 - Decide the post-MVP storage path: CAS/NBD migration, persistent qcow2 chains,
   or another deduplicated checkpoint format.
 - Revisit broader live-sharing work such as Windows VirtioFS, 9p, or custom

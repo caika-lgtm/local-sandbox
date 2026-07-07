@@ -42,9 +42,9 @@ corepack yarn install
   The Windows backend requires WHPX and does not fall back to TCG for production
   Node users. `LSB_QEMU` and `LSB_QEMU_IMG` remain supported override/debug
   paths.
-- Windows support covers sandbox start/stop, non-interactive `exec()` / `execShell()`, guest file
-  APIs, overlay mounts, SMB/CIFS direct mounts, loopback port forwarding, policy-mediated proxy
-  networking, and checkpoint restore/save. Streaming `spawn()`, interactive shells, and `watch()`
+- Windows support covers sandbox start/stop, non-interactive `exec()` / `execShell()`, streaming
+  `spawn()`, guest file APIs, `watch()`, overlay mounts, SMB/CIFS direct mounts, loopback port
+  forwarding, policy-mediated proxy networking, and checkpoint restore/save. Interactive shells
   remain macOS-only.
 
 ## Usage
@@ -197,6 +197,11 @@ denies network logon to `NT AUTHORITY\Local account`, direct mounts fail preflig
 `lsb doctor windows-smb-policy` to diagnose or `lsb doctor windows-smb-policy --fix` to apply the
 recommended local policy repair.
 
+On Windows, `watch()` on a direct SMB mount path uses a host-side Windows directory watcher and maps
+events back to guest paths. It reports host-created, modified, renamed, and deleted files, and it
+also reports guest writes that go through the CIFS mount. Read-only direct mounts can still be
+watched for host-originated changes while guest writes remain denied.
+
 `network` enables proxy networking when present. It accepts:
 
 | Option       | Type                                 | Description                        |
@@ -222,8 +227,9 @@ console.log(await proc.exited)
 await sandbox.stop()
 ```
 
-`spawn()` streaming is macOS-only in this release. On Windows, use `exec()` or `execShell()` for
-non-interactive commands; streaming process I/O returns a backend capability error.
+`spawn()` streams stdout and stderr on macOS and Windows x64. On Windows it runs over the
+virtio-serial session mux and supports cwd, stdin writes, kill, non-zero exits, and concurrent
+processes. Interactive PTY shells are still outside the Node API.
 
 ### Watch files
 
@@ -238,7 +244,10 @@ for await (const event of events) {
 }
 ```
 
-`watch()` is macOS-only in this release and returns a backend capability error on Windows.
+`watch()` works on macOS and Windows x64. On Windows, normal guest paths and overlay/import mounts
+use guest-side inotify over the session mux. Direct SMB mount paths use the host-side watcher
+described above. A recursive Windows watch whose root is an ancestor of a direct SMB mount is
+rejected; watch the direct mount target directly or start separate watches.
 
 ## Scripts
 

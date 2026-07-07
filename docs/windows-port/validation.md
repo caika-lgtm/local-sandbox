@@ -12,7 +12,7 @@ backend.
 | Golden | Any platform when deterministic | Prevent accidental QEMU behavior changes | QEMU argv snapshots, diagnostics rendering |
 | Fake process | Any platform or Windows | Process supervision without QEMU/WHPX | fake child process, timeout, cleanup behavior |
 | Windows integration | Self-hosted Windows 11 x64 | Native APIs and QEMU process behavior | QEMU discovery, WHPX preflight, named pipes, Job Objects |
-| WHPX smoke | Self-hosted Windows 11 x64 with virtualization | End-to-end runtime behavior | boot, ready, exec, copy, mount, forwarding, network, checkpoints |
+| WHPX smoke | Self-hosted Windows 11 x64 with virtualization | End-to-end runtime behavior | boot, ready, exec, mux spawn, guest watch, copy, mount, direct SMB watch, forwarding, network, checkpoints |
 | Security/conformance | Self-hosted Windows 11 x64 | Preserve product guarantees | no network default, proxy policy, path escape prevention |
 
 ## Hosted CI
@@ -109,8 +109,11 @@ through a user-facing workflow.
 - Windows Node source build/import smoke.
 - Packed root npm package plus `@local-sandbox/lsb-nodejs-win32-x64-msvc`
   install/import smoke.
+- Windows Node streaming spawn/watch smoke through
+  `bindings/nodejs/test/streaming.spec.ts`.
 - `windows_qemu_boot_smoke`.
 - `windows_qemu_exec_smoke`.
+- `windows_qemu_spawn_guest_watch_smoke`.
 - `windows_qemu_copy_transfer_smoke`.
 - `windows_qemu_mount_smoke`.
 - `windows_qemu_direct_smb_failure_cleanup_smoke`.
@@ -121,6 +124,13 @@ through a user-facing workflow.
 - CLI `:ro` overlay compatibility through `scripts/windows-smoke.ps1`.
 - Node direct read-only SMB mount behavior through
   `bindings/nodejs/scripts/windows-preflight-smoke.mjs`.
+
+The mux spawn/watch smoke covers streaming stdout, stderr, exit status, cwd,
+stdin writes, kill, concurrent processes, large-output fairness, recursive guest
+watch events, and watch/spawn coexistence. The direct SMB mount smoke covers
+host-originated direct SMB watch events, guest-originated CIFS writes observed
+by the host watcher, read-only direct SMB watch events, write denial on
+read-only mounts, and mount-only proxy egress denial.
 
 Smoke tests require these environment variables, normally written by
 `scripts/prepare-windows-boot-assets.ps1`:
@@ -165,6 +175,7 @@ cargo test -p lsb-platform real_qemu_preflight_when_explicitly_enabled -- --igno
 
 cargo test -p lsb-platform windows_qemu_boot_smoke -- --ignored --nocapture
 cargo test -p lsb-vm windows_qemu_exec_smoke -- --ignored --nocapture
+cargo test -p lsb-vm windows_qemu_spawn_guest_watch_smoke -- --ignored --nocapture
 cargo test -p lsb-vm windows_qemu_copy_transfer_smoke -- --ignored --nocapture
 cargo test -p lsb-vm windows_qemu_mount_smoke -- --ignored --nocapture
 cargo test -p lsb-vm windows_qemu_direct_smb_failure_cleanup_smoke -- --ignored --nocapture
@@ -189,6 +200,8 @@ For failed integration tests, capture:
 - boot/preflight/status JSON,
 - LocalSandbox host logs,
 - relevant control/forwarding/proxy/checkpoint logs when redacted,
+- mux session metadata, sanitized close/reset reasons, and watch error text when
+  produced,
 - allowlisted environment/tool summary,
 - diagnostic manifest showing collected and skipped files,
 - non-secret Windows SMB cleanup manifest content only while direct SMB
@@ -200,10 +213,9 @@ For failed integration tests, capture:
 Never capture secret values, raw environment dumps, boot assets, rootfs images,
 qcow2 disks, npm caches, private keys, or unredacted QEMU argv.
 
-## Current validation gap
+## Current validation focus
 
-Direct SMB mount smoke coverage has been added for rw, Node/SDK ro, CLI `:ro`
-overlay compatibility, no arbitrary outbound network, normal cleanup, failure
-cleanup, stale cleanup manifest recovery, and redaction scans. Rerun
-`./scripts/win-gh-test unit` and `./scripts/win-gh-test smoke` at final branch
-head before treating the evidence as current for upstream review.
+For changes that touch mux, spawn, watch, direct SMB mounts, QEMU transport,
+guest control, or diagnostics, rerun `./scripts/win-gh-test smoke` and record
+the workflow run plus artifact IDs in the PR or release evidence. Hosted
+Windows jobs remain WHPX-free and must not be treated as runtime validation.

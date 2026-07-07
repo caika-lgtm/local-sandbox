@@ -34,6 +34,11 @@ Before merging Windows backend work, answer:
 - [ ] Are diagnostics redacted and allowlisted?
 - [ ] For managed host tools, are archive entries path-safe, artifact hashes
       pinned, license notices present, and global PATH left unchanged?
+- [ ] For mux/session changes, does exactly one owner read the physical Windows
+      control pipe after `CAP_SESSION_MUX` is active?
+- [ ] For direct SMB watch changes, are host paths resolved only from the
+      accepted direct mount registry and are watchers stopped before SMB
+      cleanup?
 
 ## QEMU process
 
@@ -72,7 +77,14 @@ Before merging Windows backend work, answer:
   users under normal configuration.
 - Use per-sandbox names and avoid predictable global pipe names unless ACLs are
   restrictive.
-- Protocol traces must redact secrets and large payloads.
+- The raw Windows `GuestReady` frame is allowed before mux mode. After
+  `CAP_SESSION_MUX` is active, the mux manager must own the physical control
+  pipe; exec, file, mount init, and guest watch operations should use virtual
+  sessions rather than independent physical readers.
+- Mux and protocol traces must be allowlisted and metadata-only: session ids,
+  kinds, counters, frame names, elapsed times, and sanitized close reasons. Do
+  not log raw payload bytes, guest env, stdin/stdout/stderr, watch payloads, SMB
+  credentials, or secret values.
 
 ## Files and mounts
 
@@ -83,6 +95,11 @@ Before merging Windows backend work, answer:
   ephemeral users/shares/credentials, reversible NTFS/share ACL grants,
   non-secret cleanup manifests, startup stale recovery, and best-effort
   cleanup.
+- Direct SMB watch must resolve guest paths through the configured direct SMB
+  mount registry with longest-prefix and path-boundary checks. It must not
+  accept arbitrary guest strings as host paths.
+- Direct SMB host watchers must stop before SMB shares, ACL grants, generated
+  users, and cleanup manifests are removed.
 - `lsb doctor windows-smb-policy --fix` must only remove
   `NT AUTHORITY\Local account` from the network-logon deny right after checking
   for broad allow entries, and must keep local Administrator accounts and

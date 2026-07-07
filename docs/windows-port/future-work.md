@@ -5,9 +5,9 @@ deleted sprint workspace.
 
 ## Release readiness
 
-- Rerun `./scripts/win-gh-test unit` and `./scripts/win-gh-test smoke` at final
-  branch head after diagnostics collector scoping and direct SMB smoke coverage
-  changes.
+- Record the final `./scripts/win-gh-test smoke` run and diagnostics artifact
+  IDs in PR or release evidence for branches that touch Windows runtime
+  behavior.
 - Decide and document the support policy for user-supplied QEMU overrides.
 - Evaluate signing, SBOM, or mirroring improvements for the managed QEMU
   artifact.
@@ -18,10 +18,14 @@ deleted sprint workspace.
 
 ## Runtime capabilities
 
-- Design a mux/session model for virtio-serial before enabling streaming
-  `spawn`, shell, kill, file watch, or concurrent port-forward sessions.
-- Decide whether Windows file watch should observe only guest-imported copies or
-  wait for explicit SMB direct mounts or another live-sharing path.
+- Add Windows interactive shell/PTY support over the session mux if product
+  demand justifies the terminal work.
+- Decide whether port forwarding should migrate to the mux or otherwise support
+  concurrent forwarding sessions without the current serialization.
+- Design a hybrid watch aggregator before supporting one recursive watch whose
+  root spans both guest-only paths and direct SMB mount targets.
+- Define any explicit resync API or event for direct SMB watcher overflow if
+  callers need more than the current surfaced error.
 - Add live checkpointing only after a QMP/block-layer design is accepted.
 - Add native Windows build-number probing through Windows API, registry query,
   or the future diagnostics command.
@@ -52,6 +56,9 @@ Preserve these constraints:
   imply arbitrary outbound `allow_net`.
 - Host resources are ephemeral and must be cleaned up: local user, SMB shares,
   generated credentials, NTFS/share ACL grants, and stale cleanup manifests.
+- Direct SMB watch is implemented for paths at or below one direct SMB target.
+  Continue hardening overflow behavior, high-churn workloads, large trees,
+  source deletion, and cleanup ordering.
 - Keep `lsb doctor windows-smb-policy` focused on read-only diagnosis by
   default, with machine-policy changes only behind explicit `--fix`.
 - Expand performance and large-tree validation after functional WHPX smoke

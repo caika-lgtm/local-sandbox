@@ -90,11 +90,12 @@ lsb run --cpus 4 --memory 4096 --disk-size 8192 -- make -j4
 | Windows 11 x64 | QEMU with WHPX | Supported backend and Node package |
 | Windows ARM64 | Not available | Planned |
 
-Windows support covers sandbox start/stop, non-interactive `exec`, guest file
-APIs, overlay mounts, explicit SMB/CIFS direct mounts, loopback port
-forwarding, policy-mediated proxy networking, and qcow2 checkpoint save/restore.
-Streaming `spawn`, interactive shells, `watch`, and CAS/NBD checkpoints are not
-part of the Windows MVP.
+Windows support covers sandbox start/stop, non-interactive `exec`, streaming
+`spawn` with stdin/kill, guest file APIs, file `watch`, overlay mounts,
+explicit SMB/CIFS direct mounts, loopback port forwarding, policy-mediated
+proxy networking, and qcow2 checkpoint save/restore. Interactive shells,
+Windows ARM64, and CAS/NBD checkpoints are not part of the Windows support
+surface yet.
 
 With `--allow-net`, the guest resolves DNS through the host-side proxy at
 `10.0.0.1`. Leave `/etc/resolv.conf` pointed at that proxy; the proxy performs
@@ -119,6 +120,14 @@ LocalSandbox-controlled proxy path and do not imply arbitrary outbound
 `NT AUTHORITY\Local account`, direct SMB mounts fail before boot with an
 actionable preflight error; diagnose or repair that policy with
 `lsb doctor windows-smb-policy`.
+
+On Windows, `watch()` on normal guest paths and overlay/import mounts observes
+the guest filesystem view. `watch()` on SDK or Node direct SMB mount paths uses
+a host-side Windows directory watcher so host-originated changes and
+guest-originated CIFS writes are reported through the same event shape. A
+recursive watch above a direct SMB mount target is rejected instead of returning
+partial guest-only coverage; watch the SMB target directly or start separate
+watches.
 
 ```sh
 # Mount a directory (guest can write, host is untouched)

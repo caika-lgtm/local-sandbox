@@ -17,9 +17,10 @@ Track Windows backend risks here. Update this file when evidence changes a risk.
 | R011 | Public API drift while adding Windows capability errors | Medium | Medium | API-shape tests; keep platform-specific detail below SDK/CLI/Node surfaces | Open | TBD |
 | R012 | Boot asset compatibility differs between QEMU and Apple VZ | High | Medium | Self-hosted boot smoke; x86_64 serial console config; preserve guest asset invariants | Mitigating | TBD |
 | R013 | Default self-hosted Windows labels can route cache probe and smoke jobs to different machines if runner pool grows | Medium | Medium | Current docs record the single-runner assumption, keep the workflow off pull requests, and limit automatic hardware execution to trusted `main` e2e runs. Add a dedicated label or disable local-cache skip path before adding runners. | Open | Maintainer |
-| R014 | Missing mux/session model blocks streaming spawn, shell, watch, and concurrent forwarding | Medium | High | Keep unsupported errors precise; design mux/session model before enabling those APIs | Open | TBD |
+| R014 | Historical missing mux/session model blocked streaming spawn, shell, watch, and concurrent forwarding | Medium | High | Session mux is implemented for Windows exec, file, mount init, spawn, and guest watch. Interactive shell and concurrent forwarding remain separate future work. | Retired | TBD |
 | R015 | Override QEMU version policy is not finalized | Medium | Medium | Standard path pins managed QEMU 11.0.50; test and document support expectations for `LSB_QEMU`/PATH overrides | Open | Release owner |
 | R016 | Windows SMB direct mount host resources could remain after crash or partial failure | High | Medium | In-memory cleanup guards, non-secret cleanup manifests, startup stale recovery scan, fake cleanup tests, and WHPX smoke cleanup checks | Mitigating | TBD |
+| R017 | Direct SMB watch can overflow or lose useful deltas under high host filesystem churn | Medium | Medium | Host watcher surfaces overflow as an error, diagnostics tell callers to resync, and future work tracks high-churn/large-tree validation plus any explicit resync API | Mitigating | TBD |
 
 ## Status values
 

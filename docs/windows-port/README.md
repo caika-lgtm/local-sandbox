@@ -5,11 +5,13 @@ backend after the Windows MVP sprint.
 
 ## Current status
 
-The Windows MVP supports Windows 11 x64 hosts through QEMU with WHPX. It boots
-the existing Linux guest, uses virtio-serial for LocalSandbox control, supports
-non-interactive exec, guest file transfer, staged mount imports, host-to-guest
+The Windows backend supports Windows 11 x64 hosts through QEMU with WHPX. It
+boots the existing Linux guest, uses virtio-serial for LocalSandbox control,
+negotiates `CAP_SESSION_MUX` for concurrent control sessions, supports
+non-interactive exec, streaming spawn with stdin/kill, guest file transfer,
+file watch, staged mount imports, explicit SMB/CIFS direct mounts, host-to-guest
 port forwarding without a guest NIC, policy-mediated `--allow-net`, flattened
-qcow2 checkpoints, Windows x64 Node package metadata, and hosted/self-hosted CI
+qcow2 checkpoints, the Windows x64 Node package, and hosted/self-hosted CI
 coverage. The release path includes Windows x64 CLI and runtime asset artifacts
 plus a native PowerShell installer. `lsb init` installs the managed QEMU host
 tool package under `%LOCALAPPDATA%\lsb\tools\qemu` and does not mutate global
@@ -45,9 +47,17 @@ Rust SDK, or Node API shape.
 - `lsb doctor windows-smb-policy` diagnoses local policy that blocks generated
   SMB users; `--fix` replaces the broad `NT AUTHORITY\Local account`
   network-logon deny with the narrower local-Administrator-account deny.
+- Public SDK and Node `watch()` calls at or below a direct SMB target use a
+  host-side Windows directory watcher and map relative host events back to guest
+  paths. Host-originated changes and guest-originated CIFS writes are covered.
+  Read-only direct mounts still report host-originated changes while guest
+  writes remain denied.
+- Recursive watches whose root is an ancestor of a direct SMB target are
+  rejected unless the requested path is at or below a single direct SMB mount.
+  Start separate watches rather than relying on partial hybrid coverage.
 
-See `decisions.md` D024 and the implementation tracker in the repository
-`STATE.md`.
+See `decisions.md` D024, `mvp-handoff.md`, and `validation.md` for the current
+support status and smoke scope.
 
 ## Files
 

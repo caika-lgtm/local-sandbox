@@ -22,10 +22,13 @@ Use this guide to keep Windows backend failures actionable and repeatable.
 | Rootfs not mounted | wrong virtio-blk device, missing ext4 support, wrong root arg, corrupted disk | serial log, guest panic/initramfs output | confirm `root=/dev/vda` and disk format |
 | Guest agent not started | initramfs issue, missing binary, guest panic, transport wait race | serial log, init output, ready timeout | inspect `lsb-guest` startup lines |
 | Control pipe unavailable | named pipe race, bad QEMU chardev, guest driver missing, permissions | pipe path, QEMU argv, guest logs | confirm host connects during boot |
-| Exec hangs | protocol framing bug, guest wait bug, stdout/stderr backpressure, timeout missing | redacted protocol trace, guest logs | small command, large stdout, timeout test |
+| Exec hangs | protocol framing bug, guest wait bug, mux session failure, stdout/stderr backpressure, timeout missing | redacted protocol trace, mux metadata, guest logs | small command, large stdout, timeout test |
+| Spawn stream hangs | mux virtual session not opened or rejected, flow-control credit exhausted, guest child blocked on stdout/stderr, stdin/kill frame not delivered | `boot.status.json` capabilities, sanitized mux session metadata, process command shape, stdout/stderr byte counts | run small spawn, large-output spawn, concurrent small spawn, kill test |
 | Copy-in fails | Windows path normalization, symlink/junction policy, ACL denial, guest dir missing | source/target paths as safe, error kind | path traversal and reparse tests |
 | Mount differs | copy import rejected path, case collision, metadata loss, no live coherence | mount validation report, guest mount response | confirm snapshot/import semantics |
 | SMB direct mount fails | not elevated, local policy denies network logon to local accounts, SMB service unavailable, host path rejected, mount-only proxy missing, CIFS guest failure | policy preflight error, sanitized guest mount error, cleanup manifest presence, resource cleanup result | confirm Administrator shell, run `lsb doctor windows-smb-policy`, confirm SMB service, `mount.cifs`, and proxy stream argv |
+| Guest watch misses events | watched path absent, recursive inotify setup race, mux watch session reset, guest-side watch sees staged copy rather than live host source | guest path, recursive flag, sanitized watch error, mux session close reason, serial tail | watch a normal guest path, create file after watch starts, test recursive subdirectory |
+| Direct SMB watch fails or misses events | watch path outside direct target, recursive root spans mixed guest/SMB roots, host watcher open/read failure, `ReadDirectoryChangesW` overflow, source removed, cleanup stopped watcher | guest path and target label, access mode, sanitized `WindowsHostWatchError`, cleanup manifest presence, SMB policy result | watch at or below one direct target, generate host and guest changes, resync tree after overflow |
 | Port forwarding fails | bind conflict, forwarding channel unavailable, guest service not listening, listener lifecycle bug | listener log, forward status, guest logs, argv | confirm `127.0.0.1`, `-nic none`, no `hostfwd` |
 | Network policy bypass | accidental NIC/user networking, proxy bypass, DNS/direct IP hole | redacted network config, argv, proxy logs | no-network default and direct-IP denial tests |
 | Checkpoint restore fails | base/writable mismatch, path locking, copy failure, disk corruption | checkpoint metadata, disk paths, QEMU stderr | restore immediately after create, verify base immutability |
@@ -46,6 +49,8 @@ directory, or under `LSB_WINDOWS_BOOT_ARTIFACT_DIR` for ignored smoke tests:
   boot.status.json
   control.log.redacted     # if produced
   proxy.log.redacted       # if produced
+  mux.log.redacted         # if produced
+  watch.log.redacted       # if produced
 ```
 
 Managed QEMU host-tool metadata lives under:
@@ -63,6 +68,10 @@ Managed QEMU host-tool metadata lives under:
 `managed`, or `path`. `environment.summary.json` records the managed
 `current.json` path, package version, artifact SHA-256, and absolute executable
 paths when available.
+
+`boot.status.json` should include the advertised guest capabilities. Windows
+streaming spawn and guest-side watch require `session_mux`; direct SMB mounts
+require `cifs_mount`.
 
 When SMB direct mounts are active, the instance directory root may also contain
 `windows-smb-cleanup.json`; it is non-secret and transient.
@@ -132,6 +141,13 @@ delete complete. If cleanup fails or the host process exits before cleanup, a
 later Windows startup scans stale instance manifests and retries cleanup
 best-effort. Cleanup errors must stay sanitized and must not print passwords.
 
+Direct SMB watch diagnostics should identify the guest watch path, whether the
+watch was recursive, the matching direct SMB target, and the mount access mode.
+They must not log generated passwords, guest `MountRequest` payloads, proxy
+endpoints, raw file contents, or unredacted mux/watch payload bytes. A
+`Windows direct SMB directory watch overflowed; resync the watched tree` error
+means the caller must reconcile the watched tree before trusting later deltas.
+
 ## Boot/readiness diagnostics
 
 Current Windows startup readiness is a valid LocalSandbox `GuestReady` frame
@@ -145,6 +161,12 @@ over the established virtio-serial control stream. `boot.status.json` records:
 - guest version,
 - advertised capabilities.
 
+The raw `GuestReady` frame is sent before mux mode starts. After
+`CAP_SESSION_MUX` is advertised, the Windows mux manager owns the physical
+control pipe and all later exec, file, mount init, and guest watch control
+traffic should use virtual sessions. If a failure suggests multiple independent
+readers on the physical pipe, treat it as a transport bug.
+
 Important boot signatures:
 
 - `-cpu max` plus WHPX APX/MPX warnings and `WHPX: Unexpected VP exit code 4`
@@ -156,6 +178,48 @@ Important boot signatures:
   rather than a generic control-open timeout.
 - Invalid ready frames should report frame type and payload length, not raw
   payload bytes.
+
+## Mux, spawn, and watch diagnostics
+
+Mux diagnostics must be metadata-only. Safe fields include session id, session
+kind, frame type names, byte counts, credit/window counters, queue lengths,
+sanitized open/reject/reset reasons, and elapsed times. Unsafe fields include
+raw `EXEC_REQ`, `STDIN`, stdout/stderr bytes, `WATCH_EVENT` payloads with
+unreviewed paths, SMB credentials, secret placeholders or values, and raw guest
+environment dumps.
+
+For a spawn hang:
+
+- Confirm `boot.status.json` lists `session_mux`.
+- Reproduce with a small stdout command, a large-output command, and a
+  concurrent small command to distinguish guest process bugs from mux
+  backpressure.
+- Check whether `KILL` or stdin writes make progress while another session is
+  stdout-heavy.
+- Capture sanitized mux close/reset reasons and byte counters, not process
+  payload bytes.
+
+For guest-side watch failures:
+
+- Confirm the requested path is not under a Windows direct SMB target; public
+  SDK/Node watch routes those paths to the host watcher before opening a guest
+  watch session.
+- Capture the guest path, recursive flag, mux watch-session close reason, and
+  any sanitized watch error.
+- Remember that overlay/import mounts are staged guest copies on Windows; a
+  later host-side source edit is not expected to appear unless the path is an
+  explicit direct SMB mount.
+
+For direct SMB watch failures:
+
+- Confirm the path is at or below one configured direct SMB guest target.
+- Recursive watch roots that are ancestors of direct SMB targets should fail
+  with a precise unsupported error; this is expected until a hybrid aggregator
+  is designed.
+- Capture the sanitized `WindowsHostWatchError`, SMB policy diagnosis, cleanup
+  manifest status, and whether normal direct SMB file visibility still works.
+- If overflow is reported, resync the watched tree before relying on later
+  events.
 
 ## Port forwarding diagnostics
 
