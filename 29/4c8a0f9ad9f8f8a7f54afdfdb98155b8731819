@@ -25,6 +25,7 @@ crates/lsb-platform/src/windows_x86_64/fs/smb/user.rs
   s_a427c34be259ed::t_40d2295036fa0b 111,126
 docs/windows-port/mvp-handoff.md
   s_a427c34be259ed::t_f7091723bdeec0 59-60,78-81,146-147
+  s_051a8c81b733eb::t_15a74677adbb85 56-58
 crates/lsb-cli/src/doctor.rs
   s_a427c34be259ed::t_76510d597a9bb0 1-106
 crates/lsb-platform/src/windows_x86_64/fs/smb/admin.rs
@@ -52,6 +53,8 @@ scripts/windows-smoke.ps1
 STATE.md
   s_a427c34be259ed::t_fd27a20814e34b 103-104
   s_a427c34be259ed::t_1d884600095a6f 105-106,128-131,144-145,151-152,154-155,157-158,160
+  s_051a8c81b733eb::t_a8c8f50990f9d5 77
+  s_051a8c81b733eb::t_3b1898a3555530 127,132,161
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -59,6 +62,14 @@ STATE.md
   "base_commit_sha": "294c8a0f9ad9f8f8a7f54afdfdb98155b8731819",
   "prompts": {},
   "sessions": {
+    "s_051a8c81b733eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3af8-ca9d-7ce2-85d6-dede99e05053",
+        "model": "gpt-5.5"
+      },
+      "human_author": "kaian <caika@sea.com>"
+    },
     "s_a427c34be259ed": {
       "agent_id": {
         "tool": "codex",
