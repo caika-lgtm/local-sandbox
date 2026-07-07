@@ -21,6 +21,7 @@ docs/windows-port/risk-register.md
   s_a427c34be259ed::t_0185fe781491fe 10,22
 docs/windows-port/mvp-handoff.md
   s_a427c34be259ed::t_90b99bd44dc2a2 30,46-47,63,65-66,69-72,76-78,147-148
+  s_051a8c81b733eb::t_56350588bf6206 136
 PLAN.md
   s_a427c34be259ed::t_d45c8313cf124a 153-154,418,423,581-583
 crates/lsb-platform/src/windows_x86_64/fs/smb/mod.rs
@@ -38,6 +39,7 @@ crates/lsb-platform/src/windows_x86_64/fs/smb/password.rs
   s_a427c34be259ed::t_bfe9ca9fb3ce7d 70
 docs/windows-port/review-checklist.md
   s_a427c34be259ed::t_367e9243208e86 30
+  s_051a8c81b733eb::t_fbba502a1699c6 29
 docs/windows-port/security-checklist.md
   s_a427c34be259ed::t_12b28357bc03f0 83-84,104-105
 crates/lsb-platform/src/windows_x86_64/fs/smb/share.rs
@@ -61,6 +63,7 @@ STATE.md
   s_a427c34be259ed::t_9c4858fb4fb8ed 118-119,121
   s_a427c34be259ed::t_fd53691a1f4b0b 126-127
   s_a427c34be259ed::t_a2b8b8f029f921 8,14,18-21,24,55-56,63-65,68,70-71
+  s_051a8c81b733eb::t_fbba502a1699c6 149
 crates/lsb-sdk/src/runtime.rs
   s_a427c34be259ed::t_721e7d189c9d38 1301,1380-1381,1414,1421-1424
   s_a427c34be259ed::t_cf77220d9c0196 471-473
@@ -91,9 +94,11 @@ crates/lsb-platform/src/windows_x86_64/fs/smb/user.rs
 docs/windows-port/decisions.md
   s_a427c34be259ed::t_1fa3fa91d5655a 351,359-360
   s_a427c34be259ed::t_afd354ce1e77d2 365
+  s_051a8c81b733eb::t_fbba502a1699c6 364
 docs/windows-port/future-work.md
   s_a427c34be259ed::t_a2053b936119d2 47
   s_a427c34be259ed::t_3d1c3885be193c 8,38,41-42,44,53-55
+  s_051a8c81b733eb::t_56350588bf6206 9-10,40
 crates/lsb-cli/src/vm.rs
   s_a427c34be259ed::t_86e47f139905fa 127-128,132
   s_a427c34be259ed::t_cf77220d9c0196 129-131
@@ -120,6 +125,14 @@ bindings/nodejs/scripts/windows-preflight-smoke.mjs
   "base_commit_sha": "61e52f46494e3fc9bb0e335ff0f8d48b2ab15c35",
   "prompts": {},
   "sessions": {
+    "s_051a8c81b733eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f3af8-ca9d-7ce2-85d6-dede99e05053",
+        "model": "gpt-5.5"
+      },
+      "human_author": "kaian <caika@sea.com>"
+    },
     "s_a427c34be259ed": {
       "agent_id": {
         "tool": "codex",
