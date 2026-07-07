@@ -8,7 +8,7 @@ use tar::Archive;
 
 use crate::host_tools::{init_host_tools, HostToolsInitResult};
 
-const GITHUB_REPO: &str = "LocalSandBox/local-sandbox";
+const GITHUB_REPO: &str = "caika-lgtm/local-sandbox";
 
 /// Version of runtime assets expected by this SDK build.
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
