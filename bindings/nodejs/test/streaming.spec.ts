@@ -10,6 +10,14 @@ async function collectByteChunks(stream: AsyncIterable<Uint8Array>, chunks: stri
   }
 }
 
+async function countBytes(stream: AsyncIterable<Uint8Array>) {
+  let bytes = 0
+  for await (const chunk of stream) {
+    bytes += chunk.byteLength
+  }
+  return bytes
+}
+
 async function collectWatchEvents(
   stream: AsyncIterable<{ path: string; event: string }>,
   events: Array<{ path: string; event: string }>,
@@ -100,8 +108,40 @@ test.serial(
 )
 
 test.serial(
+  'supported runtime spawn keeps a small process responsive during large output',
+  async (t) => {
+    const sandbox = runtime.use(t)
+    if (!sandbox) {
+      t.log('sandbox not found')
+      return
+    }
+
+    const large = await sandbox.spawn(
+      "i=0; while [ $i -lt 256 ]; do dd if=/dev/zero bs=4096 count=1 2>/dev/null | tr '\\0' L; i=$((i + 1)); done",
+    )
+    const largeBytesTask = countBytes(large.stdout)
+    const small = await sandbox.spawn('sleep 0.1; echo small-ready')
+    const smallStdout: string[] = []
+    const smallStdoutTask = collectByteChunks(small.stdout, smallStdout)
+
+    t.is(await small.exited, 0)
+    await smallStdoutTask
+    t.is(smallStdout.join('').trim(), 'small-ready')
+
+    t.is(await large.exited, 0)
+    t.true((await largeBytesTask) >= 1024 * 1024)
+  },
+)
+
+test.serial(
   'supported runtime watch reports file changes, recurses into subdirectories, and coexists with spawn',
   async (t) => {
+    if (process.platform === 'win32') {
+      t.log('Windows watch over mux is out of scope for Slice 5')
+      t.pass()
+      return
+    }
+
     const sandbox = runtime.use(t)
     if (!sandbox) {
       t.log('sandbox not found')

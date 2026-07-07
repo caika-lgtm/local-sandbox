@@ -46,13 +46,13 @@ use lsb_platform::windows_x86_64::fs::{
     plan_windows_mounts, replan_windows_mount_import, replan_windows_smb_mount, WindowsMountImport,
     WindowsMountMode, WindowsMountSpec,
 };
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use lsb_platform::PlatformControlSessionKind;
 use lsb_platform::PlatformControlStream;
 use lsb_platform::{
     self, PlatformNetworkAttachment, PlatformSharedDir, PlatformVm, PlatformVmConfig, VmState,
 };
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-use lsb_proto::CAP_CIFS_MOUNT;
 use lsb_proto::{
     frame, ChmodRequest, CopyRequest, ExecRequest, FsOkResponse, MkdirRequest, MountRequest,
     MountResponse, PortMapping, ReadDirRequest, ReadDirResponse, ReadFileRequest, RemoveRequest,
@@ -64,6 +64,8 @@ use lsb_proto::{
     all(target_os = "windows", target_arch = "x86_64")
 ))]
 use lsb_proto::{ForwardRequest, ForwardResponse};
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use lsb_proto::{CAP_CIFS_MOUNT, CAP_SESSION_MUX};
 #[cfg(target_os = "macos")]
 use lsb_proto::{VSOCK_PORT, VSOCK_PORT_FORWARD};
 
@@ -1107,7 +1109,10 @@ impl Sandbox {
         env: &HashMap<String, String>,
         cwd: Option<&str>,
     ) -> Result<PlatformControlStream> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(
+            target_os = "macos",
+            all(target_os = "windows", target_arch = "x86_64")
+        )))]
         {
             let _ = (argv, env, cwd);
             return Err(unsupported_runtime(
@@ -1121,9 +1126,21 @@ impl Sandbox {
             let session = PlatformControlStream::from_tcp_stream(self.connect_vsock()?);
             self.initialize_exec_session(session, argv, env, cwd)
         }
+
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            let session = self
+                .vm
+                .open_control_session(PlatformControlSessionKind::Exec)
+                .context("opening Windows mux exec control session")?;
+            self.initialize_exec_session(session, argv, env, cwd)
+        }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    ))]
     fn initialize_exec_session(
         &self,
         session: PlatformControlStream,
@@ -1519,6 +1536,14 @@ impl Sandbox {
     }
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn supports_session_mux(&self) -> bool {
+        self.vm
+            .guest_capabilities()
+            .iter()
+            .any(|capability| capability == CAP_SESSION_MUX)
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     fn supports_cifs_mount(&self) -> bool {
         self.vm
             .guest_capabilities()
@@ -1621,12 +1646,34 @@ impl Sandbox {
             .map(PlatformControlStream::from_tcp_stream)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     fn connect_guest_control(&self, operation: &'static str) -> Result<PlatformControlStream> {
+        if self.supports_session_mux() {
+            let kind = windows_control_session_kind(operation);
+            let stream = self.vm.open_control_session(kind).with_context(|| {
+                format!("opening Windows virtio-serial mux {operation} control session")
+            })?;
+            let _ = stream.set_nodelay_if_tcp(true);
+            return Ok(stream);
+        }
+
         let stream = self
             .vm
             .connect_control()
             .with_context(|| format!("opening Windows virtio-serial {operation} control stream"))?;
+        let _ = stream.set_nodelay_if_tcp(true);
+        Ok(stream)
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "windows", target_arch = "x86_64")
+    )))]
+    fn connect_guest_control(&self, operation: &'static str) -> Result<PlatformControlStream> {
+        let stream = self
+            .vm
+            .connect_control()
+            .with_context(|| format!("opening guest {operation} control stream"))?;
         let _ = stream.set_nodelay_if_tcp(true);
         Ok(stream)
     }
@@ -1900,6 +1947,15 @@ fn build_exec_request(
 
 fn send_exec_request(writer: &mut impl Write, req: &ExecRequest) -> Result<()> {
     frame::send_json(writer, frame::EXEC_REQ, req).context("sending exec request")
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn windows_control_session_kind(operation: &str) -> PlatformControlSessionKind {
+    if operation == "exec" {
+        PlatformControlSessionKind::Exec
+    } else {
+        PlatformControlSessionKind::File
+    }
 }
 
 fn read_response_frame(reader: &mut impl Read, operation: &str) -> Result<(u8, Vec<u8>)> {

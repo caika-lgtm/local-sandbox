@@ -104,6 +104,11 @@ impl Clone for MuxManager {
 
 #[derive(Debug, Clone)]
 pub(crate) struct MuxSession {
+    handle: Arc<MuxSessionHandle>,
+}
+
+#[derive(Debug)]
+struct MuxSessionHandle {
     inner: Arc<MuxManagerInner>,
     session_id: u64,
 }
@@ -111,21 +116,23 @@ pub(crate) struct MuxSession {
 impl MuxSession {
     #[cfg(test)]
     fn session_id(&self) -> u64 {
-        self.session_id
+        self.handle.session_id
     }
 
     pub(crate) fn close(&self) -> io::Result<()> {
-        self.inner.close_session(self.session_id);
+        self.handle.inner.close_session(self.handle.session_id);
         Ok(())
     }
 
     pub(crate) fn reset(&self, reason: impl Into<String>) -> io::Result<()> {
-        self.inner.reset_session(self.session_id, reason.into());
+        self.handle
+            .inner
+            .reset_session(self.handle.session_id, reason.into());
         Ok(())
     }
 }
 
-impl Drop for MuxSession {
+impl Drop for MuxSessionHandle {
     fn drop(&mut self) {
         self.inner.close_session(self.session_id);
     }
@@ -137,7 +144,9 @@ impl Read for MuxSession {
             return Ok(0);
         }
 
-        let mut state = self.inner.state.lock().map_err(|_| poisoned_lock())?;
+        let inner = &self.handle.inner;
+        let session_id = self.handle.session_id;
+        let mut state = inner.state.lock().map_err(|_| poisoned_lock())?;
         loop {
             if let Some(reason) = state.failed.clone() {
                 return Err(broken_pipe(reason));
@@ -145,7 +154,7 @@ impl Read for MuxSession {
 
             let session = state
                 .sessions
-                .get_mut(&self.session_id)
+                .get_mut(&session_id)
                 .ok_or_else(|| broken_pipe("mux session no longer exists"))?;
 
             if let Some(reason) = session.reset_reason.clone() {
@@ -169,12 +178,11 @@ impl Read for MuxSession {
                             "mux read credit exceeds u32 window range",
                         )
                     })?;
-                    state = wait_for_control_queue_capacity(&self.inner, state)?;
-                    state.control_queue.push_back(MuxFrame::Window {
-                        session_id: self.session_id,
-                        credit,
-                    });
-                    self.inner.cv.notify_all();
+                    state = wait_for_control_queue_capacity(inner, state)?;
+                    state
+                        .control_queue
+                        .push_back(MuxFrame::Window { session_id, credit });
+                    inner.cv.notify_all();
                     return Ok(copied);
                 }
             }
@@ -183,7 +191,7 @@ impl Read for MuxSession {
                 return Ok(0);
             }
 
-            state = self.inner.cv.wait(state).map_err(|_| poisoned_lock())?;
+            state = inner.cv.wait(state).map_err(|_| poisoned_lock())?;
         }
     }
 }
@@ -194,7 +202,9 @@ impl Write for MuxSession {
             return Ok(0);
         }
 
-        let mut state = self.inner.state.lock().map_err(|_| poisoned_lock())?;
+        let inner = &self.handle.inner;
+        let session_id = self.handle.session_id;
+        let mut state = inner.state.lock().map_err(|_| poisoned_lock())?;
         loop {
             if let Some(reason) = state.failed.clone() {
                 return Err(broken_pipe(reason));
@@ -202,7 +212,7 @@ impl Write for MuxSession {
 
             let session = state
                 .sessions
-                .get_mut(&self.session_id)
+                .get_mut(&session_id)
                 .ok_or_else(|| broken_pipe("mux session no longer exists"))?;
 
             if let Some(reason) = session.reset_reason.clone() {
@@ -234,18 +244,20 @@ impl Write for MuxSession {
                 session.send_credit -= writable;
                 if !session.scheduled {
                     session.scheduled = true;
-                    state.ready_sessions.push_back(self.session_id);
+                    state.ready_sessions.push_back(session_id);
                 }
-                self.inner.cv.notify_all();
+                inner.cv.notify_all();
                 return Ok(writable);
             }
 
-            state = self.inner.cv.wait(state).map_err(|_| poisoned_lock())?;
+            state = inner.cv.wait(state).map_err(|_| poisoned_lock())?;
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let mut state = self.inner.state.lock().map_err(|_| poisoned_lock())?;
+        let inner = &self.handle.inner;
+        let session_id = self.handle.session_id;
+        let mut state = inner.state.lock().map_err(|_| poisoned_lock())?;
         loop {
             if let Some(reason) = state.failed.clone() {
                 return Err(broken_pipe(reason));
@@ -253,7 +265,7 @@ impl Write for MuxSession {
 
             let session = state
                 .sessions
-                .get(&self.session_id)
+                .get(&session_id)
                 .ok_or_else(|| broken_pipe("mux session no longer exists"))?;
 
             if let Some(reason) = session.reset_reason.clone() {
@@ -263,7 +275,7 @@ impl Write for MuxSession {
                 return Ok(());
             }
 
-            state = self.inner.cv.wait(state).map_err(|_| poisoned_lock())?;
+            state = inner.cv.wait(state).map_err(|_| poisoned_lock())?;
         }
     }
 }
@@ -374,8 +386,10 @@ impl MuxManagerInner {
             {
                 Some(SessionOpenState::Open) => {
                     return Ok(MuxSession {
-                        inner: Arc::clone(self),
-                        session_id,
+                        handle: Arc::new(MuxSessionHandle {
+                            inner: Arc::clone(self),
+                            session_id,
+                        }),
                     });
                 }
                 Some(SessionOpenState::Rejected(reason)) => {
@@ -1110,6 +1124,145 @@ mod tests {
                 frame => panic!("unexpected mux frame while waiting for read window: {frame:?}"),
             }
         }
+    }
+
+    #[test]
+    fn dropping_a_cloned_session_handle_does_not_close_the_virtual_session() {
+        let (host, mut peer) = channel_pair(512 * 1024);
+        let manager = MuxManager::start_for_test(host.reader, host.writer);
+
+        let open = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.open_session(MuxSessionKind::Exec).unwrap())
+        };
+        let session_id = accept_open(
+            &mut peer.reader,
+            &mut peer.writer,
+            MuxSessionKind::Exec,
+            1024,
+        );
+        let mut session = open.join().expect("open session thread should finish");
+
+        loop {
+            match read_mux(&mut peer.reader) {
+                MuxFrame::Window {
+                    session_id: window_session,
+                    ..
+                } if window_session == session_id => break,
+                frame => panic!("unexpected mux frame while waiting for initial window: {frame:?}"),
+            }
+        }
+
+        let clone = session.clone();
+        drop(clone);
+        assert!(
+            peer.reader
+                .rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "dropping a clone should not emit MUX_FIN"
+        );
+
+        session.write_all(b"still-open").unwrap();
+        match read_mux(&mut peer.reader) {
+            MuxFrame::Data {
+                session_id: data_session,
+                bytes,
+            } => {
+                assert_eq!(data_session, session_id);
+                assert_eq!(bytes, b"still-open");
+            }
+            frame => panic!("unexpected mux frame while waiting for data: {frame:?}"),
+        }
+    }
+
+    #[test]
+    fn large_session_output_does_not_starve_another_session() {
+        let (host, mut peer) = channel_pair(80 * 1024);
+        let manager = MuxManager::start_for_test(host.reader, host.writer);
+
+        let open_large = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.open_session(MuxSessionKind::Exec).unwrap())
+        };
+        let large_session_id = accept_open(
+            &mut peer.reader,
+            &mut peer.writer,
+            MuxSessionKind::Exec,
+            (mux::MAX_DATA_LEN * 4) as u32,
+        );
+        let mut large_session = open_large
+            .join()
+            .expect("large session thread should finish");
+
+        let open_small = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.open_session(MuxSessionKind::Exec).unwrap())
+        };
+        let small_session_id = accept_open(
+            &mut peer.reader,
+            &mut peer.writer,
+            MuxSessionKind::Exec,
+            1024,
+        );
+        let mut small_session = open_small
+            .join()
+            .expect("small session thread should finish");
+
+        let large_payload = vec![b'L'; mux::MAX_DATA_LEN * 4];
+        let large_writer = thread::spawn(move || {
+            large_session.write_all(&large_payload).unwrap();
+        });
+
+        let mut large_frames_seen = 0usize;
+        loop {
+            match read_mux(&mut peer.reader) {
+                MuxFrame::Data { session_id, bytes } if session_id == large_session_id => {
+                    assert!(!bytes.is_empty());
+                    large_frames_seen += 1;
+                    break;
+                }
+                MuxFrame::Window { .. } => {}
+                frame => panic!("unexpected mux frame before large data: {frame:?}"),
+            }
+        }
+
+        small_session.write_all(b"small").unwrap();
+
+        let mut saw_small = false;
+        while large_frames_seen < 4 {
+            match read_mux(&mut peer.reader) {
+                MuxFrame::Data { session_id, bytes } if session_id == small_session_id => {
+                    assert_eq!(bytes, b"small");
+                    saw_small = true;
+                    break;
+                }
+                MuxFrame::Data { session_id, bytes } if session_id == large_session_id => {
+                    assert!(!bytes.is_empty());
+                    large_frames_seen += 1;
+                }
+                MuxFrame::Window { .. } => {}
+                frame => panic!("unexpected mux frame while checking fairness: {frame:?}"),
+            }
+        }
+
+        assert!(
+            saw_small,
+            "small session was starved behind all large-session frames"
+        );
+
+        while large_frames_seen < 4 {
+            match read_mux(&mut peer.reader) {
+                MuxFrame::Data { session_id, .. } if session_id == large_session_id => {
+                    large_frames_seen += 1;
+                }
+                MuxFrame::Window { .. } => {}
+                frame => panic!("unexpected mux frame while draining large session: {frame:?}"),
+            }
+        }
+        large_writer
+            .join()
+            .expect("large writer should finish after frames drain");
     }
 
     #[test]

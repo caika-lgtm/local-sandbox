@@ -202,4 +202,71 @@ mod tests {
         );
         assert_eq!(wait_for_exit(handle.exit_watcher()), 17);
     }
+
+    #[test]
+    fn process_writes_stdin_and_kill_frames() {
+        let (host, mut guest) = memory_session_pair();
+        let handle = spawn_process_threads(Box::new(host));
+
+        handle.write(b"input\n").expect("stdin should enqueue");
+        let (msg_type, payload) = lsb_proto::frame::read_frame(&mut guest)
+            .expect("stdin frame should read")
+            .expect("stdin frame should be present");
+        assert_eq!(msg_type, lsb_proto::frame::STDIN);
+        assert_eq!(payload, b"input\n");
+
+        handle.kill().expect("kill should enqueue");
+        let (msg_type, payload) = lsb_proto::frame::read_frame(&mut guest)
+            .expect("kill frame should read")
+            .expect("kill frame should be present");
+        assert_eq!(msg_type, lsb_proto::frame::KILL);
+        assert!(payload.is_empty());
+
+        lsb_proto::frame::write_frame(
+            &mut guest,
+            lsb_proto::frame::EXIT,
+            &lsb_proto::frame::exit_payload(143),
+        )
+        .expect("exit frame should write");
+        assert_eq!(wait_for_exit(handle.exit_watcher()), 143);
+    }
+
+    #[test]
+    fn concurrent_process_handles_keep_output_and_exit_codes_separate() {
+        let (host_one, mut guest_one) = memory_session_pair();
+        let (host_two, mut guest_two) = memory_session_pair();
+        let mut one = spawn_process_threads(Box::new(host_one));
+        let mut two = spawn_process_threads(Box::new(host_two));
+
+        lsb_proto::frame::write_frame(&mut guest_two, lsb_proto::frame::STDOUT, b"two\n")
+            .expect("second stdout should write");
+        lsb_proto::frame::write_frame(
+            &mut guest_two,
+            lsb_proto::frame::EXIT,
+            &lsb_proto::frame::exit_payload(2),
+        )
+        .expect("second exit should write");
+        lsb_proto::frame::write_frame(&mut guest_one, lsb_proto::frame::STDOUT, b"one\n")
+            .expect("first stdout should write");
+        lsb_proto::frame::write_frame(
+            &mut guest_one,
+            lsb_proto::frame::EXIT,
+            &lsb_proto::frame::exit_payload(1),
+        )
+        .expect("first exit should write");
+
+        let mut stdout_one = one.take_stdout().expect("first stdout receiver");
+        let mut stdout_two = two.take_stdout().expect("second stdout receiver");
+
+        assert_eq!(
+            stdout_one.blocking_recv().expect("first stdout chunk"),
+            b"one\n".to_vec()
+        );
+        assert_eq!(
+            stdout_two.blocking_recv().expect("second stdout chunk"),
+            b"two\n".to_vec()
+        );
+        assert_eq!(wait_for_exit(one.exit_watcher()), 1);
+        assert_eq!(wait_for_exit(two.exit_watcher()), 2);
+    }
 }
