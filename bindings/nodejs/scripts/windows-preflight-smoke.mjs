@@ -44,6 +44,22 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
+async function withSmokeTimeout(label, dataDir, action, timeoutMs) {
+  let timeout = null
+  try {
+    timeout = setTimeout(() => {
+      console.error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds`)
+      stageInstanceDiagnostics(label, dataDir)
+      process.exit(1)
+    }, timeoutMs)
+    return await action()
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
 function stageInstanceDiagnostics(label, dataDir) {
   const destinationRoot = process.env.LSB_WINDOWS_BOOT_ARTIFACT_DIR
   if (!destinationRoot) {
@@ -188,17 +204,32 @@ async function expectDirectReadOnlyMount(Sandbox) {
   const source = join(dataDir, 'direct-ro-source')
   mkdirSync(source, { recursive: true })
   writeFileSync(join(source, 'input.txt'), 'node-direct-ro-host')
+  const originalStorage = process.env.LSB_STORAGE
   let sandbox = null
 
   try {
     console.log('Starting Node direct read-only SMB mount smoke')
-    sandbox = await Sandbox.start({
+    process.env.LSB_STORAGE = 'direct'
+    sandbox = await withSmokeTimeout(
+      'direct-ro-start',
       dataDir,
-      instanceId: `node-direct-ro-${process.pid}`,
-      mounts: [{ type: 'direct', hostPath: source, guestPath: '/node-ro', flags: 1 }],
-    })
+      () =>
+        Sandbox.start({
+          dataDir,
+          instanceId: `node-direct-ro-${process.pid}`,
+          mounts: [{ type: 'direct', hostPath: source, guestPath: '/node-ro', flags: 1 }],
+        }),
+      180_000,
+    )
+    console.log(`Node direct read-only SMB sandbox started: ${sandbox.instanceDir}`)
 
-    let result = await sandbox.exec(['/bin/cat', '/node-ro/input.txt'])
+    console.log('Reading Node direct read-only SMB mount input file')
+    let result = await withSmokeTimeout(
+      'direct-ro-read-initial',
+      dataDir,
+      () => sandbox.exec(['/bin/cat', '/node-ro/input.txt']),
+      60_000,
+    )
     if (result.exitCode !== 0 || result.stdout !== 'node-direct-ro-host') {
       throw new Error(
         `direct read-only mount did not expose host file: exit=${result.exitCode} stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`,
@@ -206,20 +237,34 @@ async function expectDirectReadOnlyMount(Sandbox) {
     }
 
     writeFileSync(join(source, 'after-start.txt'), 'node-direct-ro-live-host')
-    result = await sandbox.exec([
-      '/bin/sh',
-      '-c',
-      'i=0; while [ "$i" -lt 8 ]; do test "$(cat /node-ro/after-start.txt 2>/dev/null || true)" = "node-direct-ro-live-host" && exit 0; i=$((i + 1)); sleep 1; done; exit 1',
-    ])
+    console.log('Checking Node direct read-only SMB live host update')
+    result = await withSmokeTimeout(
+      'direct-ro-read-live-update',
+      dataDir,
+      () =>
+        sandbox.exec([
+          '/bin/sh',
+          '-c',
+          'i=0; while [ "$i" -lt 8 ]; do test "$(cat /node-ro/after-start.txt 2>/dev/null || true)" = "node-direct-ro-live-host" && exit 0; i=$((i + 1)); sleep 1; done; exit 1',
+        ]),
+      90_000,
+    )
     if (result.exitCode !== 0) {
       throw new Error(`direct read-only mount did not expose live host update: ${result.stderr}`)
     }
 
-    result = await sandbox.exec([
-      '/bin/sh',
-      '-c',
-      'if printf guest-write > /node-ro/guest.txt 2>/tmp/node-ro-write.err; then exit 42; fi; printf ro-denied',
-    ])
+    console.log('Checking Node direct read-only SMB guest write denial')
+    result = await withSmokeTimeout(
+      'direct-ro-write-denial',
+      dataDir,
+      () =>
+        sandbox.exec([
+          '/bin/sh',
+          '-c',
+          'if printf guest-write > /node-ro/guest.txt 2>/tmp/node-ro-write.err; then exit 42; fi; printf ro-denied',
+        ]),
+      60_000,
+    )
     if (result.exitCode !== 0 || result.stdout !== 'ro-denied') {
       throw new Error(
         `direct read-only mount allowed guest write or failed unexpectedly: exit=${result.exitCode} stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`,
@@ -232,8 +277,15 @@ async function expectDirectReadOnlyMount(Sandbox) {
     assertNotNativeLoadError(message)
     throw new Error(`Node direct read-only SMB mount smoke failed: ${message}`)
   } finally {
+    if (originalStorage === undefined) {
+      delete process.env.LSB_STORAGE
+    } else {
+      process.env.LSB_STORAGE = originalStorage
+    }
     if (sandbox) {
-      await sandbox.stop()
+      console.log(`Stopping Node direct read-only SMB sandbox: ${sandbox.instanceDir}`)
+      await withSmokeTimeout('direct-ro-stop', dataDir, () => sandbox.stop(), 60_000)
+      console.log('Node direct read-only SMB sandbox stopped')
     }
     stageInstanceDiagnostics('direct-ro', dataDir)
     rmSync(dataDir, { recursive: true, force: true })
