@@ -151,9 +151,12 @@ fn run_console(prepared: &vm::PreparedVm) -> Result<i32> {
         prepared.cpus, prepared.memory, prepared.disk_size
     );
 
+    let (network_attachment, _proxy_handle) =
+        vm::start_optional_proxy_network(prepared.proxy_config.as_ref())?;
+
     let nbd_handle = vm::start_nbd(prepared)?;
     let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());
-    let sandbox = vm::build_sandbox(prepared, true, None, nbd_uri.as_deref())?;
+    let sandbox = vm::build_sandbox(prepared, true, network_attachment, nbd_uri.as_deref())?;
     eprintln!("lsb: VM created and validated successfully");
 
     let state_rx = sandbox.state_channel();

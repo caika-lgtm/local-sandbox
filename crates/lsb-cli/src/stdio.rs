@@ -314,13 +314,8 @@ fn send_error_shared(
 pub(crate) fn run_stdio(prepared: &PreparedVm) -> Result<i32> {
     let out: SharedWriter = Arc::new(Mutex::new(io::stdout()));
 
-    // Set up proxy networking if --allow-net
-    let (network_attachment, proxy_handle) = if let Some(ref proxy_config) = prepared.proxy_config {
-        let (vm_attachment, handle) = vm::start_proxy_network(proxy_config)?;
-        (Some(vm_attachment), Some(handle))
-    } else {
-        (None, None)
-    };
+    let (network_attachment, proxy_handle) =
+        vm::start_optional_proxy_network(prepared.proxy_config.as_ref())?;
 
     let nbd_handle = vm::start_nbd(prepared)?;
     let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());

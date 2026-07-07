@@ -2,6 +2,54 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "== Windows LSB smoke test =="
 
+if (-not ("LsbSmoke.ProcessOutputCollector" -as [type])) {
+  Add-Type -TypeDefinition @'
+namespace LsbSmoke {
+  using System;
+  using System.Diagnostics;
+  using System.Text;
+
+  public sealed class ProcessOutputCollector {
+    private readonly object gate = new object();
+    private readonly StringBuilder stdout = new StringBuilder();
+    private readonly StringBuilder stderr = new StringBuilder();
+
+    public void OnOutput(object sender, DataReceivedEventArgs args) {
+      if (args.Data == null) {
+        return;
+      }
+      lock (gate) {
+        stdout.AppendLine(args.Data);
+      }
+    }
+
+    public void OnError(object sender, DataReceivedEventArgs args) {
+      if (args.Data == null) {
+        return;
+      }
+      lock (gate) {
+        stderr.AppendLine(args.Data);
+      }
+    }
+
+    public string GetText() {
+      lock (gate) {
+        string outText = stdout.ToString();
+        string errText = stderr.ToString();
+        if (outText.Length == 0) {
+          return errText;
+        }
+        if (errText.Length == 0) {
+          return outText;
+        }
+        return outText + Environment.NewLine + errText;
+      }
+    }
+  }
+}
+'@
+}
+
 function Invoke-NativeCommand {
   param(
     [Parameter(Mandatory = $true)]
@@ -15,6 +63,103 @@ function Invoke-NativeCommand {
   if ($LASTEXITCODE -ne 0) {
     throw "$FilePath $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
   }
+}
+
+function Start-NativeCommandOutput {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments
+  )
+
+  $collector = [LsbSmoke.ProcessOutputCollector]::new()
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $FilePath
+  $psi.WorkingDirectory = (Get-Location).Path
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  foreach ($argument in $Arguments) {
+    [void]$psi.ArgumentList.Add($argument)
+  }
+
+  $process = [System.Diagnostics.Process]::new()
+  $process.StartInfo = $psi
+  $outputHandler = [System.Diagnostics.DataReceivedEventHandler]$collector.OnOutput
+  $errorHandler = [System.Diagnostics.DataReceivedEventHandler]$collector.OnError
+  $process.add_OutputDataReceived($outputHandler)
+  $process.add_ErrorDataReceived($errorHandler)
+
+  [void]$process.Start()
+  $process.BeginOutputReadLine()
+  $process.BeginErrorReadLine()
+
+  return [pscustomobject]@{
+    Process = $process
+    Collector = $collector
+    OutputHandler = $outputHandler
+    ErrorHandler = $errorHandler
+    Command = "$FilePath $($Arguments -join ' ')"
+  }
+}
+
+function Get-StartedCommandText {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Started
+  )
+
+  return $Started.Collector.GetText()
+}
+
+function Stop-StartedCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Started
+  )
+
+  if (-not $Started.Process.HasExited) {
+    try {
+      $Started.Process.Kill($true)
+    } catch {
+      try {
+        $Started.Process.Kill()
+      } catch {
+      }
+    }
+  }
+
+  [void]$Started.Process.WaitForExit(30000)
+  $Started.Process.remove_OutputDataReceived($Started.OutputHandler)
+  $Started.Process.remove_ErrorDataReceived($Started.ErrorHandler)
+}
+
+function Wait-StartedCommandOutputContains {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Started,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Needle,
+
+    [int]$TimeoutSeconds = 120
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $text = Get-StartedCommandText $Started
+    if ($text.Contains($Needle)) {
+      return
+    }
+    if ($Started.Process.HasExited) {
+      throw "process exited before output contained '$Needle'. Exit code: $($Started.Process.ExitCode). Output: $text"
+    }
+    Start-Sleep -Milliseconds 200
+  }
+
+  throw "timed out waiting for output '$Needle'. Output: $(Get-StartedCommandText $Started)"
 }
 
 Invoke-NativeCommand "cargo" @("run", "-p", "lsb-cli", "--", "--help")
@@ -225,6 +370,71 @@ function Invoke-WindowsCliRoOverlaySmoke {
   }
 }
 
+function Invoke-WindowsCliConsoleDirectSmbSmoke {
+  Write-Host "== Windows CLI console direct SMB proxy smoke =="
+
+  $source = Join-Path (Get-Location).Path "target\windows-smoke-cli-console-rw"
+  Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $source | Out-Null
+  Write-Utf8NoBomText -Path (Join-Path $source "input.txt") -Value "cli-console-rw-host"
+
+  $started = $null
+  try {
+    $mountSpec = "${source}:/workspace:rw"
+    $started = Start-NativeCommandOutput "cargo" @(
+      "run",
+      "-p",
+      "lsb-cli",
+      "--",
+      "run",
+      "--console",
+      "--kernel",
+      $env:LSB_WINDOWS_BOOT_KERNEL,
+      "--initrd",
+      $env:LSB_WINDOWS_BOOT_INITRD,
+      "--rootfs",
+      $env:LSB_WINDOWS_BOOT_ROOTFS,
+      "--memory",
+      "2048",
+      "--disk-size",
+      "4096",
+      "--allow-host-writes",
+      "--mount",
+      $mountSpec
+    )
+
+    Wait-StartedCommandOutputContains -Started $started -Needle "lsb: VM started" -TimeoutSeconds 180
+  } finally {
+    if ($null -ne $started) {
+      Stop-StartedCommand $started
+    }
+    try {
+      Invoke-NativeCommand "cargo" @(
+        "run",
+        "-p",
+        "lsb-cli",
+        "--",
+        "run",
+        "--kernel",
+        $env:LSB_WINDOWS_BOOT_KERNEL,
+        "--initrd",
+        $env:LSB_WINDOWS_BOOT_INITRD,
+        "--rootfs",
+        $env:LSB_WINDOWS_BOOT_ROOTFS,
+        "--memory",
+        "2048",
+        "--disk-size",
+        "4096",
+        "--",
+        "/bin/true"
+      )
+    } catch {
+      Write-Warning "Best-effort stale cleanup trigger after CLI console smoke failed: $($_.Exception.Message)"
+    }
+    Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Write-Host "== Windows QEMU preflight smoke =="
 $env:LSB_TEST_REAL_QEMU = "1"
 Invoke-NativeCommand "cargo" @(
@@ -248,6 +458,7 @@ if ($missingBootVars.Count -eq 0) {
   Invoke-NativeCommand "cargo" @("run", "-p", "lsb-cli", "--", "doctor", "windows-smb-policy", "--fix", "--yes")
   Invoke-WindowsNodeSmoke
   Invoke-WindowsCliRoOverlaySmoke
+  Invoke-WindowsCliConsoleDirectSmbSmoke
   Write-Host "== Windows QEMU direct boot smoke =="
   Invoke-NativeCommand "cargo" @("test", "-p", "lsb-platform", "windows_qemu_boot_smoke", "--", "--ignored", "--nocapture")
   Write-Host "== Windows guest exec smoke =="

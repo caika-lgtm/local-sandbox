@@ -404,6 +404,20 @@ pub(crate) fn start_proxy_network(
     Ok((vm_attachment, handle))
 }
 
+pub(crate) fn start_optional_proxy_network(
+    proxy_config: Option<&lsb_proxy::config::ProxyConfig>,
+) -> Result<(
+    Option<PlatformNetworkAttachment>,
+    Option<lsb_proxy::ProxyHandle>,
+)> {
+    if let Some(proxy_config) = proxy_config {
+        let (vm_attachment, handle) = start_proxy_network(proxy_config)?;
+        Ok((Some(vm_attachment), Some(handle)))
+    } else {
+        Ok((None, None))
+    }
+}
+
 fn platform_network_attachment(
     attachment: lsb_proxy::VmNetworkAttachment,
 ) -> PlatformNetworkAttachment {
@@ -495,18 +509,11 @@ fn run_command_inner(
         prepared.cpus, prepared.memory, prepared.disk_size
     );
 
-    // Set up proxy networking if --allow-net
-    let (network_attachment, proxy_handle) = if let Some(ref proxy_config) = prepared.proxy_config {
-        let (vm_attachment, handle) = start_proxy_network(proxy_config)?;
-
-        if prepared.verbose {
-            eprintln!("lsb: proxy started");
-        }
-
-        (Some(vm_attachment), Some(handle))
-    } else {
-        (None, None)
-    };
+    let (network_attachment, proxy_handle) =
+        start_optional_proxy_network(prepared.proxy_config.as_ref())?;
+    if proxy_handle.is_some() && prepared.verbose {
+        eprintln!("lsb: proxy started");
+    }
 
     let nbd_handle = start_nbd(prepared)?;
     let nbd_uri = nbd_handle.as_ref().map(|handle| handle.uri());
@@ -899,6 +906,34 @@ mod tests {
             lsb_proxy::config::SMB_MOUNT_PORT
         ));
         assert!(proxy.is_domain_allowed("example.com"));
+    }
+
+    #[test]
+    fn optional_proxy_network_is_absent_without_proxy_config() {
+        let (attachment, handle) =
+            start_optional_proxy_network(None).expect("missing proxy config should be a no-op");
+
+        assert!(attachment.is_none());
+        assert!(handle.is_none());
+    }
+
+    #[test]
+    fn optional_proxy_network_starts_attachment_for_proxy_config() {
+        let (attachment, handle) =
+            start_optional_proxy_network(Some(&lsb_proxy::config::ProxyConfig::mount_only_smb()))
+                .expect("proxy config should start a network attachment");
+
+        assert!(attachment.is_some());
+        assert!(handle.is_some());
+
+        drop(handle);
+
+        #[cfg(unix)]
+        if let Some(PlatformNetworkAttachment::FileDescriptor(fd)) = attachment {
+            unsafe {
+                libc::close(fd);
+            }
+        }
     }
 
     #[test]

@@ -111,6 +111,8 @@ and validation results synchronized while implementing `PLAN.md`.
 | 2026-07-07 | 3bd3f97 | GitHub Actions smoke run 28818786154 / job 85465063670 | Failed | CLI `:ro` overlay smoke still failed, now with guest `/bin/sh` exit code 2. The multiline PowerShell here-string used for diagnostics introduced Windows line handling into the Linux `sh -c` payload. |
 | 2026-07-07 | working tree | `git diff --check`; PowerShell parser check for `scripts/windows-smoke.ps1`; `/bin/sh -n -c '<CLI ro smoke guest script>'` | Pass | CLI `:ro` smoke guest diagnostics now use a single-line POSIX shell payload with explicit semicolons. |
 | 2026-07-07 | working tree | `cargo fmt --all`; `cargo test -p lsb-vm send_mount_requests_redacts_smb_source_on_mount_failure`; `cargo test -p lsb-platform windows_x86_64::fs::smb`; `cargo test -p lsb-guest`; `cargo test -p lsb-cli`; `cargo test -p lsb-vm`; `cargo test -p lsb-sdk`; `cargo check -p lsb-platform --target x86_64-pc-windows-msvc`; `cargo check -p lsb-vm --target x86_64-pc-windows-msvc`; `cargo check --workspace`; `git diff --check` | Pass | Added a Windows SMB active-instance lock so stale recovery skips live manifests, kept the CLI SMB proxy alive through `Sandbox::stop()`, surfaced stop/cleanup failures, and redacted generated SMB identifiers from mount failure errors. The live-lock recovery regression is Windows-only and will execute in Windows unit CI. |
+| 2026-07-07 | working tree | `cargo fmt --all`; `cargo test -p lsb-cli`; `git diff --check` | Pass | Review fix: CLI console mode now uses the prepared proxy config and passes the proxy-backed network attachment into sandbox construction, so Windows direct SMB mounts and `--allow-net` console runs do not drop proxy networking. |
+| 2026-07-07 | working tree | `pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw -LiteralPath 'scripts/windows-smoke.ps1')) \| Out-Null"`; `cargo test -p lsb-cli`; `git diff --check` | Pass | Added `scripts/windows-smoke.ps1` coverage for CLI `--console` plus Windows direct `:rw` SMB mount without `--allow-net`; the lane waits for `lsb: VM started`, which proves SMB mount initialization completed with the prepared proxy attachment. |
 
 ## Open Blockers
 
@@ -147,7 +149,9 @@ artifacts unless they are intentionally checked in.
 | `crates/lsb-proxy/src/config.rs` | Updated | Added `ProxyMode`, mount-only SMB config helpers, gateway/SMB constants, and policy tests. |
 | `crates/lsb-proxy/src/dns.rs` | Updated | Mount-only SMB mode answers `host.lsb.internal` locally and refuses arbitrary DNS without host resolver forwarding. |
 | `crates/lsb-proxy/src/proxy.rs` | Updated | Routes only guest `10.0.0.1:445` to host `127.0.0.1:445` in SMB modes and denies other mount-only TCP flows. |
+| `crates/lsb-cli/src/main.rs` | Updated | Console mode now starts the optional prepared proxy network and passes its attachment into `build_sandbox`, keeping the proxy handle alive for the console VM lifetime. |
 | `crates/lsb-cli/src/vm.rs` | Updated | Detects Windows direct mounts and selects mount-only SMB proxy config when `allow_net` is false, or merges SMB relay into the normal proxy when `allow_net` is true; CLI `:ro` remains overlay; keeps the proxy alive through `Sandbox::stop()` and surfaces stop/cleanup failures. |
+| `crates/lsb-cli/src/stdio.rs` | Updated | Uses the shared optional proxy startup helper, matching command and console run modes. |
 | `crates/lsb-cli/src/cli.rs` | Updated | Adds the `doctor windows-smb-policy` command surface with explicit `--fix` and `--yes` flags. |
 | `crates/lsb-cli/src/doctor.rs` | Added | Prints Windows SMB policy diagnosis, blocks broad-risk automatic repair, prompts for `--fix`, and supports CI-safe `--fix --yes`. |
 | `crates/lsb-sdk/src/runtime.rs` | Updated | Mirrors CLI proxy selection for SDK/Node callers, runs stale SMB recovery before instance reuse, and adds direct SMB rw/no-network/cleanup smoke coverage. |
@@ -156,7 +160,7 @@ artifacts unless they are intentionally checked in.
 | `crates/lsb-platform/Cargo.toml` | Updated | Added Windows API feature gates required by native SMB admin, user, share, and ACL adapters. |
 | `crates/lsb-platform/src/windows_x86_64/fs/mod.rs` | Updated | Exposes the Windows SMB lifecycle module under the Windows fs namespace. |
 | `crates/lsb-platform/src/windows_x86_64/fs/smb/` | Added/Updated | Implements fakeable SMB admin/password/user/ACL/share components, native Windows adapters, host loopback and SMB policy preflight, policy diagnosis/fix helpers, lifecycle setup/cleanup, non-secret cleanup manifests, active-instance lock guarded stale recovery, mount request generation with localhost UNC targets plus Windows computer-name auth domains, account-specific `SeNetworkLogonRight` grant/revoke without built-in Users alias membership, name validation, password redaction, and unit tests. |
-| `scripts/windows-smoke.ps1` | Updated | Runs `lsb doctor windows-smb-policy --fix --yes` before boot-asset smoke lanes, adds CLI `:ro` overlay plus direct SMB success/failure-cleanup ignored test invocations, writes newline-free CLI `:ro` fixtures, and uses a single-line POSIX guest script for labelled CLI overlay diagnostics. |
+| `scripts/windows-smoke.ps1` | Updated | Runs `lsb doctor windows-smb-policy --fix --yes` before boot-asset smoke lanes, adds CLI `:ro` overlay, CLI `--console` direct SMB proxy coverage, plus direct SMB success/failure-cleanup ignored test invocations, writes newline-free CLI `:ro` fixtures, and uses a single-line POSIX guest script for labelled CLI overlay diagnostics. |
 | `bindings/nodejs/scripts/windows-preflight-smoke.mjs` | Updated | Adds Node direct read-only SMB smoke coverage. |
 | `README.md` | Updated | Documents final Windows SMB/CIFS direct mount behavior and SMB policy doctor command. |
 | `bindings/nodejs/README.md` | Updated | Documents Windows direct mount flags, Administrator requirement, and SMB policy doctor command. |
@@ -194,6 +198,10 @@ artifacts unless they are intentionally checked in.
 - CLI `:ro` overlay compatibility: `scripts/windows-smoke.ps1` runs a CLI
   `:ro` overlay smoke with newline-free fixtures and labelled guest diagnostics;
   hardware rerun pending after fixture fix.
+- CLI `--console` direct SMB proxy attachment: `scripts/windows-smoke.ps1` now
+  starts a CLI `:rw` direct SMB mount in console mode without `--allow-net` and
+  waits for `lsb: VM started`, proving mount initialization completed through
+  the mount-only SMB proxy; hardware rerun pending.
 - Mount-only proxy no arbitrary outbound network: Covered by SDK direct SMB
   smoke and existing proxy policy tests; hardware smoke pending.
 - Cleanup leaves no LocalSandbox shares: Covered by SDK direct SMB smoke and
