@@ -221,9 +221,7 @@ async function expectDirectReadOnlyMount(Sandbox) {
         }),
       180_000,
     )
-    console.log(`Node direct read-only SMB sandbox started: ${sandbox.instanceDir}`)
 
-    console.log('Reading Node direct read-only SMB mount input file')
     let result = await withSmokeTimeout(
       'direct-ro-read-initial',
       dataDir,
@@ -237,7 +235,6 @@ async function expectDirectReadOnlyMount(Sandbox) {
     }
 
     writeFileSync(join(source, 'after-start.txt'), 'node-direct-ro-live-host')
-    console.log('Checking Node direct read-only SMB live host update')
     result = await withSmokeTimeout(
       'direct-ro-read-live-update',
       dataDir,
@@ -253,7 +250,6 @@ async function expectDirectReadOnlyMount(Sandbox) {
       throw new Error(`direct read-only mount did not expose live host update: ${result.stderr}`)
     }
 
-    console.log('Checking Node direct read-only SMB guest write denial')
     result = await withSmokeTimeout(
       'direct-ro-write-denial',
       dataDir,
@@ -283,9 +279,7 @@ async function expectDirectReadOnlyMount(Sandbox) {
       process.env.LSB_STORAGE = originalStorage
     }
     if (sandbox) {
-      console.log(`Stopping Node direct read-only SMB sandbox: ${sandbox.instanceDir}`)
       await withSmokeTimeout('direct-ro-stop', dataDir, () => sandbox.stop(), 60_000)
-      console.log('Node direct read-only SMB sandbox stopped')
     }
     stageInstanceDiagnostics('direct-ro', dataDir)
     rmSync(dataDir, { recursive: true, force: true })

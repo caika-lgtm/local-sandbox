@@ -643,28 +643,13 @@ where
             }
         };
 
-        if let Err(error) = write_physical_mux_frame(&mut writer, frame_type, &payload) {
+        if let Err(error) = frame::write_frame(&mut writer, frame_type, &payload) {
             inner.fail(format!(
                 "failed to write Windows mux physical control stream: {error}"
             ));
             return;
         }
     }
-}
-
-fn write_physical_mux_frame(
-    writer: &mut impl Write,
-    frame_type: u8,
-    payload: &[u8],
-) -> io::Result<()> {
-    // Windows named-pipe FlushFileBuffers can wait for the peer to drain the
-    // pipe. The mux physical writer is unbuffered, so write_all is sufficient.
-    let len = 1u32 + payload.len() as u32;
-    let mut buf = Vec::with_capacity(4 + 1 + payload.len());
-    buf.extend_from_slice(&len.to_be_bytes());
-    buf.push(frame_type);
-    buf.extend_from_slice(payload);
-    writer.write_all(&buf)
 }
 
 fn next_outgoing_frame(inner: &MuxManagerInner) -> Option<MuxFrame> {
@@ -881,10 +866,6 @@ mod tests {
         tx: SyncSender<u8>,
     }
 
-    struct FlushPanicsWriter {
-        bytes: Vec<u8>,
-    }
-
     impl Read for ChannelReader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if buf.is_empty() {
@@ -923,17 +904,6 @@ mod tests {
 
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
-        }
-    }
-
-    impl Write for FlushPanicsWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.bytes.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            panic!("physical mux frame writes must not flush the underlying pipe");
         }
     }
 
@@ -1333,16 +1303,6 @@ mod tests {
             .expect_err("unacknowledged mux session should time out");
 
         assert!(matches!(err, MuxSessionError::OpenTimeout { .. }));
-    }
-
-    #[test]
-    fn physical_mux_write_does_not_flush_underlying_pipe() {
-        let mut writer = FlushPanicsWriter { bytes: Vec::new() };
-
-        write_physical_mux_frame(&mut writer, mux::MUX_OPEN, &[0, 1, 2])
-            .expect("physical mux frame should write without flushing");
-
-        assert_eq!(writer.bytes, [0, 0, 0, 4, mux::MUX_OPEN, 0, 1, 2]);
     }
 
     #[test]

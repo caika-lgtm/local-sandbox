@@ -139,6 +139,8 @@ impl Write for WindowsNamedPipeStream {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        // FlushFileBuffers on QEMU's Windows pipe can block behind guest reads;
+        // writes above already submit the bytes to the unbuffered pipe handle.
         Ok(())
     }
 }
