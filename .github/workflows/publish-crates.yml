@@ -39,4 +39,5 @@ jobs:
           publish lsb-platform
           publish lsb-proxy
           publish lsb-vm
+          publish lsb-store
           publish lsb-sdk

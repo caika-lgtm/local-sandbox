@@ -12,6 +12,7 @@ on:
       - "crates/lsb-proto/**"
       - "crates/lsb-proxy/**"
       - "crates/lsb-platform/**"
+      - "crates/lsb-store/**"
   pull_request:
     paths:
       - ".github/workflows/nodejs-binding.yml"
@@ -22,6 +23,7 @@ on:
       - "crates/lsb-proto/**"
       - "crates/lsb-proxy/**"
       - "crates/lsb-platform/**"
+      - "crates/lsb-store/**"
 
 env:
   MACOSX_DEPLOYMENT_TARGET: "14.0"

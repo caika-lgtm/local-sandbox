@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.4.0
+
 ### Windows 11 x64 backend and Node package MVP
 
 - Added a native Windows 11 x64 backend using QEMU with WHPX to boot the existing
@@ -22,9 +24,7 @@
   transport, and Windows ARM64 remain unsupported in this MVP. Windows users
   install managed QEMU host tools with `lsb init`.
 
-## 0.4.1
-
-### CLI (`lsb-cli` 0.4.1)
+### CLI (`lsb-cli` 0.4.0)
 
 - Fixed `--allow-net` having no effect in `--stdio` mode. Proxy networking now works via the SDK.
 - Secret environment variables are now injected into exec/spawn calls in stdio mode
@@ -35,8 +35,6 @@
 - `exec()` and `spawn()` now accept `string | string[]`. Array form passes argv directly with no shell interpretation.
 - Added `shell` option to `ExecOptions` and `SpawnOptions` to override the default shell (e.g. `/bin/bash` instead of `sh`)
 - New exported type: `ExecOptions`
-
-## 0.4.0
 
 ### Streaming spawn, kill, and file watching
 
